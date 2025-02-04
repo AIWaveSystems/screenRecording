@@ -1,6 +1,6 @@
 # Screen Recorder
 
-Una aplicación de escritorio eficiente y optimizada para grabar la pantalla con audio del sistema y micrófono.
+Una aplicación de escritorio eficiente y optimizada para grabar la pantalla con audio del sistema y micrófono, para tener en cuenta la version de instalador puede no ser la version mas reciente del programa.
 
 ## 🚀 Características
 
@@ -28,9 +28,11 @@ Una aplicación de escritorio eficiente y optimizada para grabar la pantalla con
 
 1. Clona el repositorio:
 ```bash
-git clone https://github.com/yourusername/screen-recorder.git
+git clone https://github.com/AIWaveSystems/screenRecording.git
 cd screen-recorder
 ```
+ * directamente para windows [aquí](https://github.com/AIWaveSystems/screenRecording/src/dist/)
+
 
 2. Crea un entorno virtual:
 ```bash
@@ -144,4 +146,4 @@ Este proyecto está bajo la Licencia MIT - ver el archivo [LICENSE](LICENSE) par
 - Todos los contribuidores y usuarios
 
 ---
-Desarrollado con ❤️ por [Tu Nombre]
+Desarrollado con ❤️ por [Ilesandres]
