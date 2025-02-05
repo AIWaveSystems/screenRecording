@@ -1,0 +1,1 @@
+"""Core functionality package for the screen recorder application.""" 

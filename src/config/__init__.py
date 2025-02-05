@@ -1,0 +1,1 @@
+"""Configuration settings for the screen recorder application.""" 

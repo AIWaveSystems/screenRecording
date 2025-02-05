@@ -31,7 +31,7 @@ Una aplicación de escritorio eficiente y optimizada para grabar la pantalla con
 git clone https://github.com/AIWaveSystems/screenRecording.git
 cd screen-recorder
 ```
- * directamente para windows [aquí](https://github.com/AIWaveSystems/screenRecording/src/dist/)
+ * directamente para windows [aquí](https://github.com/AIWaveSystems/screenRecording/dist/)
 
 
 2. Crea un entorno virtual:
