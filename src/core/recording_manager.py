@@ -115,27 +115,23 @@ class RecordingManager:
 
     def _open_video(self):
         width, height = self._video_size
-        self._video_writer = cv2.VideoWriter(
-            self._paths['video'],
-            cv2.VideoWriter_fourcc(*VIDEO_CODEC),
-            VIDEO_FPS,
-            (width, height),
-        )
-        if not self._video_writer.isOpened():
-            self._video_writer = None
-            raise RecordingError(
-                "No se pudo crear el archivo de vídeo. "
-                f"¿Está disponible el códec {VIDEO_CODEC}?"
+        codecs_to_try = [VIDEO_CODEC, 'MJPG', 'mp4v', 'X264']
+        for codec in codecs_to_try:
+            self._video_writer = cv2.VideoWriter(
+                self._paths['video'],
+                cv2.VideoWriter_fourcc(*codec),
+                VIDEO_FPS,
+                (width, height),
             )
-        test_frame = np.zeros((height, width, 3), dtype=np.uint8)
-        try:
-            self._video_writer.write(test_frame)
-        except Exception as exc:
+            if self._video_writer.isOpened():
+                print(f"[video-writer] códec seleccionado: {codec}")
+                return
             self._video_writer.release()
             self._video_writer = None
-            raise RecordingError(
-                f"El códec {VIDEO_CODEC} no puede escribir frames: {exc}"
-            )
+        raise RecordingError(
+            "No se encontró un códec de vídeo funcional.\n"
+            "Instala ffmpeg o verifica que OpenCV tenga codecs soportados."
+        )
 
     def _begin_video(self):
         """Arranca el reloj del vídeo cuando el audio ya está capturando."""
@@ -148,16 +144,11 @@ class RecordingManager:
         self._video_thread.start()
 
     def _video_loop(self):
-        """Escribe a FPS constante contra el reloj real.
-
-        El número de frames escritos se deriva del tiempo transcurrido, no de
-        cuántos frames haya producido la captura. Así la duración del archivo
-        coincide siempre con la duración real y el audio queda sincronizado,
-        aunque la captura o el encoder se retrasen puntualmente.
-        """
+        """Escribe a FPS constante contra el reloj real."""
         width, height = self._video_size
         black = np.zeros((height, width, 3), dtype=np.uint8)
         frame_time = 1.0 / VIDEO_FPS
+        frame_count = 0
 
         try:
             while True:
@@ -172,17 +163,29 @@ class RecordingManager:
                 target = int((now - self._start_time - self._total_paused) * VIDEO_FPS)
 
                 frame = self._frame_provider() if self._frame_provider else None
-                frame = self._fit(frame, width, height) if frame is not None else black
+                if frame is None:
+                    frame = black
+                else:
+                    frame = self._fit(frame, width, height)
+
+                if self._video_writer is None:
+                    print("[video-writer] writer es None, deteniendo")
+                    return
 
                 while self.frames_written < target:
                     self._video_writer.write(frame)
                     self.frames_written += 1
+                    frame_count += 1
+                    if frame_count == 1:
+                        print(f"[video-writer] primer frame escrito, shape={frame.shape}")
 
                 if end is not None:
                     return
                 time.sleep(frame_time / 2)
         except Exception as exc:
+            import traceback
             print(f"[video-writer] error fatal: {exc}")
+            traceback.print_exc()
             self._stop_time = time.perf_counter()
 
     def pause(self):
