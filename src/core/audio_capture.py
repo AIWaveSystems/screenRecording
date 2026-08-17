@@ -7,9 +7,12 @@ import queue
 import threading
 import time
 import wave
+import warnings
 
 import numpy as np
 import sounddevice as sd
+
+warnings.filterwarnings("ignore", message=".*data discontinuity.*")
 
 from ..config.settings import (
     AUDIO_CHUNK_SIZE,
