@@ -1,24 +1,28 @@
-# video_streaming_project/main.py
-import sys
+"""Punto de entrada de Screen Recorder."""
 import asyncio
+import sys
+
 import qasync
 from PyQt5.QtWidgets import QApplication
+
 from src.ui.main_window import StreamApp
+
 
 def main():
     app = QApplication(sys.argv)
-    
-    # Crear loop de eventos asíncrono
+    app.setApplicationName("Screen Recorder")
+
     loop = qasync.QEventLoop(app)
     asyncio.set_event_loop(loop)
-    
-    # Crear y mostrar la ventana principal
+
+    closed = asyncio.Event()
+    app.aboutToQuit.connect(closed.set)
+
     window = StreamApp()
     window.show()
-    
-    # Ejecutar la aplicación con soporte asíncrono
+
     with loop:
-        loop.run_forever()
+        loop.run_until_complete(closed.wait())
 
 if __name__ == "__main__":
     main()
