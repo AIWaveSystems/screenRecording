@@ -1,6 +1,9 @@
 # Registro de cambios
 
-## Sin publicar
+## v1.0 — 2026-08-17
+
+Primera versión publicada.
+[Descargar](https://github.com/AIWaveSystems/screenRecording/releases/latest)
 
 ### Añadido
 - **Refuerzo del micrófono**: ganancia extra fija (+15% por defecto, ajustable
@@ -60,7 +63,7 @@
   claves `mic` y `speakers`, en lugar de exigir acceso a atributos privados.
 - Dependencia `soundcard` sustituida por `PyAudioWPatch`.
 
-## Anterior
+## Desarrollo previo
 
 ### Corregido
 - Sincronía audio/vídeo, fuga de handles GDI en la captura del cursor,
