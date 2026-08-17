@@ -127,6 +127,15 @@ class RecordingManager:
                 "No se pudo crear el archivo de vídeo. "
                 f"¿Está disponible el códec {VIDEO_CODEC}?"
             )
+        test_frame = np.zeros((height, width, 3), dtype=np.uint8)
+        try:
+            self._video_writer.write(test_frame)
+        except Exception as exc:
+            self._video_writer.release()
+            self._video_writer = None
+            raise RecordingError(
+                f"El códec {VIDEO_CODEC} no puede escribir frames: {exc}"
+            )
 
     def _begin_video(self):
         """Arranca el reloj del vídeo cuando el audio ya está capturando."""
