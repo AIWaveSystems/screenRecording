@@ -52,3 +52,4 @@ _smoke_out/
 # Configuracion local del usuario
 config.json
 state.json
+_ui_shots/
