@@ -1,0 +1,113 @@
+Screen Recorder
+Copyright (c) 2026 Ilesandres
+
+El código fuente de este proyecto se distribuye bajo la licencia MIT (LICENSE).
+Este archivo lista los componentes de terceros que la aplicación utiliza y sus
+licencias, que deben respetarse además de la MIT.
+
+Versiones verificadas el 2026-08-17 en el entorno de desarrollo del proyecto.
+
+
+================================================================================
+AVISO SOBRE LA REDISTRIBUCIÓN DEL EJECUTABLE
+================================================================================
+
+Dos componentes son copyleft fuerte (GPL v3):
+
+  - PyQt5 (Riverbank Computing), sobre el que está construida toda la interfaz.
+  - El binario de FFmpeg que incluye imageio-ffmpeg, compilado con
+    --enable-gpl --enable-version3.
+
+Consecuencia práctica: el código fuente propio sigue siendo MIT y puede usarse,
+modificarse y redistribuirse con esa licencia, pero **un ejecutable que enlace
+PyQt5 o incorpore ese binario de FFmpeg constituye una obra combinada que debe
+distribuirse bajo GPL v3**, ofreciendo el código fuente correspondiente a quien
+reciba el binario. Publicar el .exe bajo licencia MIT a secas no cumple esa
+condición.
+
+Alternativas si se necesita distribuir la aplicación con licencia permisiva o
+cerrada:
+
+  1. Sustituir PyQt5 por PySide6 (LGPL v3, de los propios autores de Qt), que
+     permite enlazado dinámico desde aplicaciones propietarias, y usar una
+     compilación LGPL de FFmpeg (sin --enable-gpl).
+  2. Adquirir la licencia comercial de PyQt5 de Riverbank Computing.
+  3. No distribuir el ejecutable y publicar solo el código fuente, dejando que
+     cada usuario instale las dependencias.
+
+Este aviso es una descripción técnica de las licencias implicadas, no
+asesoramiento legal.
+
+
+================================================================================
+COMPONENTES DE TERCEROS
+================================================================================
+
+--------------------------------------------------------------------------------
+PyQt5 5.15.11 — GPL v3
+Riverbank Computing Limited
+https://www.riverbankcomputing.com/software/pyqt/
+Interfaz gráfica. Copyleft: ver el aviso de arriba.
+
+PyQt5-Qt5 5.15.2 — LGPL v3
+The Qt Company
+https://www.qt.io/
+Bibliotecas Qt empaquetadas junto a PyQt5.
+
+--------------------------------------------------------------------------------
+FFmpeg 7.1 (compilación "essentials" de gyan.dev) — GPL v3
+The FFmpeg developers
+https://ffmpeg.org/
+Se obtiene a través de imageio-ffmpeg y se usa para mezclar audio y vídeo.
+Compilado con --enable-gpl --enable-version3. Copyleft: ver el aviso de arriba.
+
+imageio-ffmpeg 0.6.0 — BSD 2-Clause
+Copyright (c) 2015-2026, imageio contributors
+https://github.com/imageio/imageio-ffmpeg
+El paquete de Python es BSD; el binario de FFmpeg que distribuye no lo es.
+
+--------------------------------------------------------------------------------
+opencv-python 5.0.0.93 — Apache License 2.0
+https://github.com/opencv/opencv-python
+Escritura de vídeo y conversión de imagen.
+
+--------------------------------------------------------------------------------
+NumPy 2.5.2 — BSD 3-Clause
+Copyright (c) 2005-2026, NumPy Developers
+https://numpy.org/
+
+--------------------------------------------------------------------------------
+python-mss 10.2.0 — MIT License
+Copyright (c) 2013-2026, Mickaël Schoentgen & contributors
+https://github.com/BoboTiG/python-mss
+Captura de pantalla.
+
+--------------------------------------------------------------------------------
+sounddevice 0.5.6 — MIT License
+Copyright (c) 2015-2026 Matthias Geier
+https://github.com/spatialaudio/python-sounddevice
+Captura de micrófono y enumeración de dispositivos.
+Incorpora binarios de PortAudio (MIT License, http://www.portaudio.com/).
+
+--------------------------------------------------------------------------------
+PyAudioWPatch 0.2.12.8 — Apache License 2.0
+https://github.com/s0d3s/PyAudioWPatch
+Captura del audio del sistema por loopback WASAPI.
+Derivado de PyAudio (MIT License, Copyright (c) 2006 Hubert Pham) e incorpora
+binarios de PortAudio (MIT License).
+
+--------------------------------------------------------------------------------
+qasync 0.28.0 — BSD 2-Clause
+https://github.com/CabbageDevelopment/qasync
+Integración entre asyncio y el bucle de eventos de Qt.
+
+--------------------------------------------------------------------------------
+pywin32 312 — Python Software Foundation License
+Copyright (c) 1994-2008 Mark Hammond
+https://github.com/mhammond/pywin32
+Acceso a las API de Windows para la captura del cursor.
+
+--------------------------------------------------------------------------------
+
+El texto completo de cada licencia se encuentra en el directorio de instalación
+del paquete correspondiente, dentro del entorno virtual del proyecto.

@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+
+  "output_dir": "C:\\Users\\TU_USUARIO\\ScreenRecordings",
+
+  "video": {
+    "fps": 30,
+    "codec": "XVID",
+    "capture_cursor": true
+  },
+
+  "preview": {
+    "fps": 15,
+    "max_width": 640
+  },
+
+  "audio": {
+    "mic_device": "__default__",
+    "speaker_device": "__default__",
+    "mic_volume": 1.0,
+    "speaker_volume": 1.0,
+    "mic_muted": false,
+    "speaker_muted": false,
+    "mic_boost": 1.15,
+    "sample_rate": 48000
+  },
+
+  "monitor": {
+    "index": 0,
+    "width": 1920,
+    "height": 1080
+  },
+
+  "ui": {
+    "compact": false
+  }
+}
