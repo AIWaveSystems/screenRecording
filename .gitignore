@@ -48,3 +48,7 @@ videos/**
 
 # Salidas de pruebas
 _smoke_out/
+
+# Configuracion local del usuario
+config.json
+state.json
