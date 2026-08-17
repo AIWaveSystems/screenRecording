@@ -7,8 +7,8 @@ import cv2
 import mss
 import qasync
 import sounddevice as sd
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QColor, QFont, QImage, QPainter, QPixmap
+from PyQt5.QtCore import QSize, Qt, QTimer, pyqtSignal
+from PyQt5.QtGui import QColor, QImage, QPainter, QPixmap
 from PyQt5.QtWidgets import (
     QApplication,
     QComboBox,
@@ -33,7 +33,11 @@ from ..core.recording_manager import (
     RecordingManager,
 )
 from ..core.screen_capture import ScreenCaptureThread
-from .audio_settings import AudioSettingsDialog
+from . import icons
+from .audio_settings import AudioSettingsDialog, MicBoostDialog
+
+ICON_SIZE = QSize(18, 18)
+ICON_SIZE_LARGE = QSize(22, 22)
 
 DARK_BG = "#1e1e2e"
 DARK_PANEL = "#2b2b3d"
@@ -304,13 +308,23 @@ class AudioChannelPanel(QWidget):
     volume_changed = pyqtSignal(float)
     mute_toggled = pyqtSignal(bool)
 
-    def __init__(self, title, parent=None):
+    def __init__(self, title, icon_name, parent=None):
         super().__init__(parent)
+        self._title_text = title
+        self._icon_name = icon_name
+        self._compact = False
+        self._boost_text = ""
         self.setFixedWidth(96)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(2, 2, 2, 2)
         layout.setSpacing(3)
+
+        self._icon = QLabel()
+        self._icon.setAlignment(Qt.AlignCenter)
+        self._icon.setPixmap(icons.pixmap(icon_name, ACCENT_BLUE).scaled(
+            22, 22, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        layout.addWidget(self._icon)
 
         self._title = QLabel(title)
         self._title.setObjectName("channelTitle")
@@ -347,25 +361,67 @@ class AudioChannelPanel(QWidget):
 
         layout.addLayout(body, 1)
 
-        self.mute_button = QPushButton("Silenciar")
+        self.mute_button = QPushButton()
         self.mute_button.setObjectName("muteButton")
         self.mute_button.setCheckable(True)
+        self.mute_button.setIconSize(ICON_SIZE)
         self.mute_button.toggled.connect(self._on_mute)
         layout.addWidget(self.mute_button)
 
+        self._refresh_mute_button(False)
+
+    def _refresh_mute_button(self, muted):
+        off_icon = f"{self._icon_name}_off"
+        self.mute_button.setIcon(
+            icons.icon(off_icon if muted else self._icon_name,
+                       "#ffffff" if muted else TEXT_PRIMARY)
+        )
+        self.mute_button.setText("" if self._compact
+                                 else ("Silenciado" if muted else "Silenciar"))
+        self.mute_button.setToolTip(
+            "Silenciado: se graba silencio en esta pista" if muted
+            else "Silenciar esta pista"
+        )
+
     def _on_slider(self, value):
-        self._value.setText(f"{value}%")
+        self._update_value_label(value)
         self.volume_changed.emit(value / 100.0)
 
+    def _update_value_label(self, value):
+        """En modo compacto el refuerzo va solo en el tooltip: no cabe."""
+        suffix = "" if self._compact else self._boost_text
+        self._value.setText(f"{value}%{suffix}")
+
+    def set_boost(self, boost):
+        """Muestra el refuerzo fijo que se suma al volumen de la pista."""
+        extra = int(round((boost - 1.0) * 100))
+        self._boost_text = f" +{extra}%" if extra else ""
+        self._value.setToolTip(
+            f"Volumen {self.slider.value()}% con un refuerzo fijo de +{extra}%"
+            if extra else "Volumen de la pista"
+        )
+        self._update_value_label(self.slider.value())
+
     def _on_mute(self, muted):
-        self.mute_button.setText("Silenciado" if muted else "Silenciar")
+        self._refresh_mute_button(muted)
         self.meter.set_muted(muted)
         self.slider.setEnabled(not muted)
         self.mute_toggled.emit(muted)
 
+    def set_compact(self, compact):
+        self._compact = bool(compact)
+        self._title.setVisible(not self._compact)
+        self._device.setVisible(not self._compact)
+        self.setFixedWidth(64 if self._compact else 96)
+        self._refresh_mute_button(self.is_muted())
+        self._update_value_label(self.slider.value())
+
     def set_device_name(self, name):
         self._device.setText(name or "(sin grabar)")
-        self._device.setToolTip(name or "(sin grabar)")
+        tooltip = f"{self._title_text}: {name}" if name else \
+            f"{self._title_text}: (sin grabar)"
+        self._device.setToolTip(tooltip)
+        self._icon.setToolTip(tooltip)
         enabled = bool(name)
         self.slider.setEnabled(enabled and not self.is_muted())
         self.mute_button.setEnabled(enabled)
@@ -379,7 +435,7 @@ class AudioChannelPanel(QWidget):
     def set_volume(self, volume):
         self.slider.blockSignals(True)
         self.slider.setValue(int(round(volume * 100)))
-        self._value.setText(f"{int(round(volume * 100))}%")
+        self._update_value_label(self.slider.value())
         self.slider.blockSignals(False)
 
     def is_muted(self):
@@ -388,7 +444,7 @@ class AudioChannelPanel(QWidget):
     def set_muted(self, muted):
         self.mute_button.blockSignals(True)
         self.mute_button.setChecked(bool(muted))
-        self.mute_button.setText("Silenciado" if muted else "Silenciar")
+        self._refresh_mute_button(bool(muted))
         self.meter.set_muted(bool(muted))
         self.slider.setEnabled(not muted)
         self.mute_button.blockSignals(False)
@@ -410,7 +466,9 @@ class StreamApp(QMainWindow):
             self.config['output_dir'],
             fps=self.config['video']['fps'],
             codec=self.config['video']['codec'],
+            mic_boost=self.config['audio']['mic_boost'],
         )
+        self.compact_mode = self.config['ui']['compact']
 
         self.screens = []
         self.current_screen = None
@@ -528,10 +586,20 @@ class StreamApp(QMainWindow):
         self.screen_selector.currentIndexChanged.connect(self.update_screen_selection)
         top_bar.addWidget(self.screen_selector, 1)
 
-        self.audio_button = QPushButton("Audio")
-        self.audio_button.setFixedWidth(80)
+        self.audio_button = QPushButton()
+        self.audio_button.setIcon(icons.icon('sliders', TEXT_PRIMARY))
+        self.audio_button.setIconSize(ICON_SIZE)
         self.audio_button.clicked.connect(self.show_audio_settings)
         top_bar.addWidget(self.audio_button)
+
+        self.compact_button = QPushButton()
+        self.compact_button.setIcon(icons.icon('compact', TEXT_PRIMARY))
+        self.compact_button.setIconSize(ICON_SIZE)
+        self.compact_button.setCheckable(True)
+        self.compact_button.setFixedWidth(44)
+        self.compact_button.setToolTip("Alternar entre iconos y texto")
+        self.compact_button.toggled.connect(self._on_compact_toggled)
+        top_bar.addWidget(self.compact_button)
         left_panel.addLayout(top_bar)
 
         self.preview_label = QLabel()
@@ -559,19 +627,23 @@ class StreamApp(QMainWindow):
         controls_row = QHBoxLayout()
         controls_row.setSpacing(8)
 
-        self.record_button = QPushButton("Iniciar Grabacion")
+        self.record_button = QPushButton()
         self.record_button.setObjectName("recordButton")
+        self.record_button.setIconSize(ICON_SIZE_LARGE)
         self.record_button.clicked.connect(self.toggle_recording)
         controls_row.addWidget(self.record_button)
 
-        self.pause_button = QPushButton("Pausa")
+        self.pause_button = QPushButton()
         self.pause_button.setObjectName("pauseButton")
+        self.pause_button.setIconSize(ICON_SIZE_LARGE)
         self.pause_button.setVisible(False)
         self.pause_button.clicked.connect(self.toggle_pause)
         controls_row.addWidget(self.pause_button)
 
-        self.open_folder_button = QPushButton("Abrir carpeta")
+        self.open_folder_button = QPushButton()
         self.open_folder_button.setObjectName("openFolderButton")
+        self.open_folder_button.setIcon(icons.icon('folder', "#1e1e2e"))
+        self.open_folder_button.setIconSize(ICON_SIZE)
         self.open_folder_button.setVisible(False)
         self.open_folder_button.clicked.connect(self._open_recording_folder)
         controls_row.addWidget(self.open_folder_button)
@@ -589,7 +661,7 @@ class StreamApp(QMainWindow):
         audio_section.setAlignment(Qt.AlignCenter)
         right_panel.addWidget(audio_section)
 
-        self.mic_panel = AudioChannelPanel("MICRÓFONO")
+        self.mic_panel = AudioChannelPanel("MICRÓFONO", 'mic')
         self.mic_panel.volume_changed.connect(
             lambda value: self._on_volume_changed(MIC, value)
         )
@@ -597,7 +669,7 @@ class StreamApp(QMainWindow):
             lambda muted: self._on_mute_toggled(MIC, muted)
         )
 
-        self.speaker_panel = AudioChannelPanel("SISTEMA")
+        self.speaker_panel = AudioChannelPanel("SISTEMA", 'speaker')
         self.speaker_panel.volume_changed.connect(
             lambda value: self._on_volume_changed(SPEAKERS, value)
         )
@@ -625,29 +697,95 @@ class StreamApp(QMainWindow):
         self.preview_timer.start(max(1, 1000 // self.preview_fps))
 
         self.update_screen_list()
+        self._apply_compact_mode(self.compact_mode)
 
     def _build_menu(self):
         menu = self.menuBar()
 
         archivo = menu.addMenu("Archivo")
-        archivo.addAction("Abrir carpeta de grabaciones", self._open_output_folder)
-        archivo.addAction("Cambiar carpeta de salida...", self._choose_output_folder)
+        archivo.addAction(icons.icon('folder', TEXT_PRIMARY),
+                          "Abrir carpeta de grabaciones", self._open_output_folder)
+        archivo.addAction(icons.icon('folder', TEXT_PRIMARY),
+                          "Cambiar carpeta de salida...", self._choose_output_folder)
         archivo.addSeparator()
-        archivo.addAction("Salir", self.close)
+        archivo.addAction(icons.icon('exit', TEXT_PRIMARY), "Salir", self.close)
 
         config = menu.addMenu("Configuración")
-        config.addAction("Fuentes de audio...", self.show_audio_settings)
+        config.addAction(icons.icon('sliders', TEXT_PRIMARY),
+                         "Fuentes de audio...", self.show_audio_settings)
+        config.addAction(icons.icon('boost', TEXT_PRIMARY),
+                         "Refuerzo del micrófono...", self.show_mic_boost)
         config.addSeparator()
-        config.addAction("Abrir carpeta de configuración", self._open_config_folder)
-        config.addAction("Restablecer configuración", self._reset_config)
+        config.addAction(icons.icon('gear', TEXT_PRIMARY),
+                         "Abrir carpeta de configuración", self._open_config_folder)
+        config.addAction(icons.icon('reset', TEXT_PRIMARY),
+                         "Restablecer configuración", self._reset_config)
+
+        vista = menu.addMenu("Ver")
+        self.compact_action = vista.addAction(
+            icons.icon('compact', TEXT_PRIMARY), "Solo iconos"
+        )
+        self.compact_action.setCheckable(True)
+        self.compact_action.setChecked(self.compact_mode)
+        self.compact_action.setShortcut("Ctrl+I")
+        self.compact_action.toggled.connect(self._on_compact_toggled)
 
     def _apply_audio_config(self):
         audio = self.config['audio']
         self.mic_panel.set_volume(audio['mic_volume'])
         self.mic_panel.set_muted(audio['mic_muted'])
+        self.mic_panel.set_boost(audio['mic_boost'])
         self.speaker_panel.set_volume(audio['speaker_volume'])
         self.speaker_panel.set_muted(audio['speaker_muted'])
+        self.speaker_panel.set_boost(1.0)
         self._refresh_channel_labels()
+
+    def _on_compact_toggled(self, compact):
+        if compact == self.compact_mode:
+            return
+        self._apply_compact_mode(compact)
+        self._schedule_save()
+
+    def _apply_compact_mode(self, compact):
+        """Alterna entre botones con texto y botones de solo icono."""
+        self.compact_mode = bool(compact)
+
+        for widget in (self.compact_button, self.compact_action):
+            widget.blockSignals(True)
+            widget.setChecked(self.compact_mode)
+            widget.blockSignals(False)
+
+        self.audio_button.setText("" if self.compact_mode else "Audio")
+        self.audio_button.setFixedWidth(44 if self.compact_mode else 90)
+        self.audio_button.setToolTip("Fuentes de audio")
+
+        self.open_folder_button.setText("" if self.compact_mode else "Abrir carpeta")
+        self.open_folder_button.setToolTip("Abrir la carpeta de la grabación")
+
+        self.mic_panel.set_compact(self.compact_mode)
+        self.speaker_panel.set_compact(self.compact_mode)
+
+        self._refresh_transport_buttons()
+
+    def _refresh_transport_buttons(self):
+        """Texto e icono de grabar y pausar según el estado y el modo de vista."""
+        if self.is_recording:
+            self.record_button.setIcon(icons.icon('stop', "#ffffff"))
+            record_text = "Detener"
+        else:
+            self.record_button.setIcon(icons.icon('record', "#ffffff"))
+            record_text = "Iniciar Grabacion"
+        self.record_button.setText("" if self.compact_mode else record_text)
+        self.record_button.setToolTip(record_text)
+
+        if self.is_paused:
+            self.pause_button.setIcon(icons.icon('play', "#1e1e2e"))
+            pause_text = "Reanudar"
+        else:
+            self.pause_button.setIcon(icons.icon('pause', "#1e1e2e"))
+            pause_text = "Pausa"
+        self.pause_button.setText("" if self.compact_mode else pause_text)
+        self.pause_button.setToolTip(pause_text)
 
     def _refresh_channel_labels(self):
         self.mic_panel.set_device_name(
@@ -683,7 +821,8 @@ class StreamApp(QMainWindow):
             mic_level = levels.get('mic', 0.0)
             spk_level = levels.get('speakers', 0.0)
 
-        self.mic_panel.set_level(mic_level * self.mic_panel.get_volume())
+        boost = self.recording_manager.mic_boost
+        self.mic_panel.set_level(mic_level * self.mic_panel.get_volume() * boost)
         self.speaker_panel.set_level(spk_level * self.speaker_panel.get_volume())
 
     @staticmethod
@@ -776,10 +915,9 @@ class StreamApp(QMainWindow):
 
         self.is_recording = True
         self.is_paused = False
-        self.record_button.setText("Detener")
+        self._refresh_transport_buttons()
         self.record_button.setEnabled(True)
         self.pause_button.setVisible(True)
-        self.pause_button.setText("Pausa")
         self.timer_label.setText("00:00")
         self.timer_label.setVisible(True)
         self.screen_selector.setEnabled(False)
@@ -789,7 +927,8 @@ class StreamApp(QMainWindow):
     async def stop_recording(self):
         self.record_button.setEnabled(False)
         self.pause_button.setEnabled(False)
-        self.record_button.setText("Procesando...")
+        if not self.compact_mode:
+            self.record_button.setText("Procesando...")
         self.status_label.setText("Cerrando archivos...")
 
         try:
@@ -816,7 +955,7 @@ class StreamApp(QMainWindow):
             self.is_recording = False
             self.is_paused = False
 
-        self.record_button.setText("Iniciar Grabacion")
+        self._refresh_transport_buttons()
         self.record_button.setEnabled(True)
         self.pause_button.setVisible(False)
         self.pause_button.setEnabled(True)
@@ -831,13 +970,12 @@ class StreamApp(QMainWindow):
         if self.is_paused:
             self.recording_manager.resume()
             self.is_paused = False
-            self.pause_button.setText("Pausa")
             self.status_label.setText("Grabando...")
         else:
             self.recording_manager.pause()
             self.is_paused = True
-            self.pause_button.setText("Reanudar")
             self.status_label.setText("Pausado")
+        self._refresh_transport_buttons()
 
     def update_screen_list(self):
         self.screens = get_screen_list()
@@ -890,6 +1028,17 @@ class StreamApp(QMainWindow):
             thread.finished.connect(thread.deleteLater)
         self.preview_label.clear()
 
+    def show_mic_boost(self):
+        dialog = MicBoostDialog(self.recording_manager.mic_boost, self)
+        if not dialog.exec_():
+            return
+        boost = dialog.boost()
+        self.recording_manager.set_mic_boost(boost)
+        self.mic_panel.set_boost(self.recording_manager.mic_boost)
+        extra = int(round((self.recording_manager.mic_boost - 1.0) * 100))
+        self.status_label.setText(f"Refuerzo del micrófono: +{extra}%")
+        self._save_config()
+
     def show_audio_settings(self):
         if self.is_recording:
             QMessageBox.information(
@@ -918,7 +1067,10 @@ class StreamApp(QMainWindow):
             'speaker_volume': self.speaker_panel.get_volume(),
             'mic_muted': self.mic_panel.is_muted(),
             'speaker_muted': self.speaker_panel.is_muted(),
+            'mic_boost': self.recording_manager.mic_boost,
         })
+        config['ui'] = dict(self.config.get('ui', {}))
+        config['ui']['compact'] = self.compact_mode
         config['monitor'] = dict(self.config['monitor'])
         if self.current_screen is not None and self.screens:
             monitor = self.screens[self.current_screen]['monitor']
@@ -994,9 +1146,11 @@ class StreamApp(QMainWindow):
 
         self.config = user_config.reset()
         self.recording_manager.output_dir = self.config['output_dir']
+        self.recording_manager.set_mic_boost(self.config['audio']['mic_boost'])
         self.selected_mics = self._restore_device('mics', 'mic_device')
         self.selected_speakers = self._restore_device('speakers', 'speaker_device')
         self._apply_audio_config()
+        self._apply_compact_mode(self.config['ui']['compact'])
         self._start_live_monitor()
         self.status_label.setText("Configuración restablecida")
 
