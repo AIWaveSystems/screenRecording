@@ -630,10 +630,6 @@ class StreamApp(QMainWindow):
         self.audio_button.setEnabled(True)
         self.mic_slider.setEnabled(True)
         self.speaker_slider.setEnabled(True)
-        try:
-            self._start_live_monitor()
-        except Exception as exc:
-            print(f"[stop_recording] error reiniciando monitor: {exc}")
 
     def toggle_pause(self):
         if not self.is_recording:
@@ -706,16 +702,23 @@ class StreamApp(QMainWindow):
         self.preview_timer.stop()
         if self._meter_timer:
             self._meter_timer.stop()
+
         self._live_monitor.stop()
 
         if self.is_recording:
             if self.is_paused:
                 self.recording_manager.resume()
-            paths = self.recording_manager.stop()
-            self.is_recording = False
-            if paths:
-                self.recording_manager.finalize(paths)
+            try:
+                paths = self.recording_manager.stop()
+                self.is_recording = False
+                if paths:
+                    self.recording_manager.finalize(paths)
+            except Exception as exc:
+                print(f"[closeEvent] error deteniendo grabación: {exc}")
 
         self.stop_capture_thread()
         self.recording_manager.cleanup()
+
+        import sys
         event.accept()
+        sys.exit(0)
