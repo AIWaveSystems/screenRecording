@@ -516,6 +516,9 @@ class StreamApp(QMainWindow):
             return
 
         try:
+            if self.is_recording:
+                self.recording_manager.write_frame(frame)
+
             height, width = frame.shape[:2]
             preview_width = min(PREVIEW_MAX_WIDTH, width)
             preview_height = max(1, int(height * (preview_width / width)))
@@ -558,7 +561,6 @@ class StreamApp(QMainWindow):
                 self.screens[self.current_screen]['monitor'],
                 self.selected_speakers,
                 self.selected_mics,
-                lambda: self.capture_thread.latest_frame if self.capture_thread else None,
             )
         except RecordingError as exc:
             QMessageBox.critical(self, "No se pudo iniciar la grabación", str(exc))
