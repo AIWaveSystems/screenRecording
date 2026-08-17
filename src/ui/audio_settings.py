@@ -11,16 +11,17 @@ from PyQt5.QtWidgets import (
 class AudioSettingsDialog(QDialog):
     """Selección de las fuentes de audio a grabar.
 
-    Se elige como máximo una fuente de cada tipo: el grabador solo abre un
-    stream por pista, así que ofrecer varias casillas prometía algo que nunca
-    se cumplía.
+    Se elige como máximo una fuente de cada tipo: el grabador abre un stream
+    por pista, así que ofrecer varias casillas prometía algo que nunca se
+    cumplía. La elección se recuerda por nombre entre sesiones.
     """
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._app = parent
-        self.setWindowTitle("Configuración de Audio")
-        self.setMinimumWidth(480)
+        self.setWindowTitle("Fuentes de audio")
+        self.setMinimumWidth(520)
+        self.setStyleSheet(parent.styleSheet() if parent else "")
         self.init_ui()
 
     def init_ui(self):
@@ -40,7 +41,9 @@ class AudioSettingsDialog(QDialog):
 
         hint = QLabel(
             "El audio del sistema se captura por loopback WASAPI sobre la salida "
-            "elegida; no hace falta 'Mezcla estéreo' ni VB-Cable."
+            "elegida; no hace falta 'Mezcla estéreo' ni VB-Cable.\n"
+            "Para silenciar una pista sin dejar de grabarla, usa el botón "
+            "Silenciar del mezclador."
         )
         hint.setWordWrap(True)
         layout.addWidget(hint)
