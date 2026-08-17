@@ -1,7 +1,25 @@
 # Screen Recorder
 
-Aplicación de escritorio para grabar la pantalla con audio del sistema y micrófono.
-La versión del instalador puede no ser la más reciente del programa.
+Grabador de pantalla para Windows con captura de audio del sistema y micrófono,
+pensado para ser ligero y no pelearse con la configuración de sonido de Windows.
+
+[![Descargar](https://img.shields.io/github/v/release/AIWaveSystems/screenRecording?label=descargar&style=for-the-badge)](https://github.com/AIWaveSystems/screenRecording/releases/latest)
+[![Licencia](https://img.shields.io/badge/c%C3%B3digo-MIT-blue?style=for-the-badge)](LICENSE)
+[![Plataforma](https://img.shields.io/badge/plataforma-Windows%2010%20%7C%2011-lightgrey?style=for-the-badge)](#-requisitos)
+
+## ⬇️ Descarga
+
+**[Descargar ScreenRecorder.exe](https://github.com/AIWaveSystems/screenRecording/releases/latest/download/ScreenRecorder.exe)**
+— o revisa [todas las versiones](https://github.com/AIWaveSystems/screenRecording/releases).
+
+No requiere instalación ni dependencias: FFmpeg y todo lo necesario van dentro
+del ejecutable. Descárgalo y ábrelo.
+
+> **Aviso de Windows SmartScreen.** El ejecutable no está firmado digitalmente,
+> así que Windows mostrará una advertencia la primera vez. Pulsa
+> *Más información → Ejecutar de todas formas*.
+
+Si prefieres ejecutarlo desde el código fuente, ve a [Instalación](#-instalación).
 
 ## 🚀 Características
 
@@ -21,22 +39,26 @@ La versión del instalador puede no ser la más reciente del programa.
 - Configuración persistente entre sesiones (monitor, dispositivos, volúmenes)
 - Salida AVI con compresión XVID, mezclada sin recodificar el vídeo
 
-## 📋 Requisitos Previos
+## 📋 Requisitos
 
-- Python 3.9 o superior
-- Windows 10/11
+| | Ejecutable | Desde el código |
+|---|---|---|
+| Sistema | Windows 10 u 11 (64 bits) | Windows 10 u 11 (64 bits) |
+| Python | no hace falta | 3.9 o superior |
+| FFmpeg | incluido | incluido vía `imageio-ffmpeg` |
 
-FFmpeg viene incluido a través de `imageio-ffmpeg`; si tienes uno propio en el PATH,
-se usa ese.
+Si tienes tu propio FFmpeg en el PATH, se usa ese en lugar del incluido.
 
 ## 🔧 Instalación
+
+> Solo si vas a ejecutarlo desde el código. Para usarlo sin más, ve a
+> [Descarga](#-descarga).
 
 1. Clona el repositorio:
 ```bash
 git clone https://github.com/AIWaveSystems/screenRecording.git
 cd screenRecording
 ```
-* Ejecutable directo para Windows [aquí](https://github.com/AIWaveSystems/screenRecording/dist/)
 
 2. Crea un entorno virtual:
 ```bash
@@ -55,18 +77,19 @@ pip install -r requirements.txt
 
 ## 🎮 Uso
 
-1. Ejecuta la aplicación:
+Abre `ScreenRecorder.exe`, o desde el código:
+
 ```bash
 python main.py
 ```
 
-2. Selecciona el monitor a grabar
-3. Opcionalmente ajusta las fuentes de audio (por defecto se usan el micrófono y
+1. Selecciona el monitor a grabar
+2. Opcionalmente ajusta las fuentes de audio (por defecto se usan el micrófono y
    la salida predeterminados de Windows)
-4. Ajusta volúmenes o silencia una pista en el mezclador de la derecha; se puede
+3. Ajusta volúmenes o silencia una pista en el mezclador de la derecha; se puede
    hacer antes y durante la grabación
-5. Pulsa "Iniciar Grabación"
-6. Para terminar, pulsa "Detener Grabación"
+4. Pulsa "Iniciar Grabación"
+5. Para terminar, pulsa "Detener Grabación"
 
 Las grabaciones se guardan en `C:\Users\<usuario>\ScreenRecordings\<fecha>\`,
 o en la carpeta que elijas en *Archivo → Cambiar carpeta de salida*.
@@ -107,7 +130,7 @@ La posición de la ventana va aparte, en `state.json`, para que un problema con
 ella no afecte a las preferencias. Consulta la ruta exacta con:
 
 ```bash
-python main.py --config-path
+ScreenRecorder.exe --config-path    # o: python main.py --config-path
 ```
 
 ### Qué se guarda
@@ -190,8 +213,23 @@ screenRecording/
 ├── tests/                         # Pruebas (ver abajo)
 ├── config.example.json            # Configuración de referencia
 ├── main.py                        # Punto de entrada
-└── requirements.txt
+├── main.spec                      # Receta de PyInstaller
+├── requirements.txt
+├── CHANGELOG.md                   # Novedades por versión
+├── LICENSE / LICENSE.es.md        # Licencia MIT del código
+└── NOTICE                         # Licencias de terceros
 ```
+
+## 📦 Compilar el ejecutable
+
+```bash
+pip install pyinstaller
+pyinstaller main.spec
+```
+
+El resultado queda en `dist/ScreenRecorder.exe`. La receta incluye el binario de
+FFmpeg y el backend de audio, así que el ejecutable no necesita nada más. Pesa
+unos 150 MB porque lleva Qt y FFmpeg completos dentro.
 
 ## 🧪 Pruebas
 
@@ -208,16 +246,38 @@ python tests/leak_test.py       # comprueba que no se filtran handles GDI
 pantalla y abre dispositivos de audio reales. `ui_visual_test.py` deja capturas
 de ambos modos de interfaz en `_ui_shots/`.
 
+## ⚠️ Limitaciones conocidas
+
+Conviene saber qué **no** hace todavía antes de usarlo para algo serio:
+
+- **Solo Windows.** Usa APIs propias del sistema para el cursor y el audio.
+- **Codificación por CPU** (XVID). Aún no usa el codificador por hardware de la
+  tarjeta gráfica, así que en 4K o con equipos modestos el consumo es notable.
+- **Se graba el monitor completo**: no hay selección de región ni de una ventana
+  concreta.
+- Sin cámara web, sin atajos de teclado globales y sin escenas ni fuentes
+  múltiples al estilo de OBS.
+- Salida en AVI. Todavía no hay MP4 ni elección de contenedor desde la interfaz.
+
 ## 🔍 Solución de Problemas
 
+### Windows bloquea el ejecutable o el antivirus lo marca
+El `.exe` no está firmado digitalmente y PyInstaller empaqueta un intérprete de
+Python dentro, algo que algunos antivirus marcan por heurística. En SmartScreen,
+*Más información → Ejecutar de todas formas*. Si prefieres no fiarte del binario,
+[ejecútalo desde el código fuente](#-instalación): hace exactamente lo mismo.
+
 ### No se captura el audio del sistema
-1. Comprueba que `PyAudioWPatch` está instalado (`pip install PyAudioWPatch`)
-2. Verifica que la salida elegida es la que realmente está sonando
-3. Si el equipo no expone loopback, se usa "Mezcla estéreo" como alternativa
+1. Verifica que la salida elegida en *Configuración → Fuentes de audio* es la que
+   realmente está sonando
+2. Si el equipo no expone loopback, se usa "Mezcla estéreo" como alternativa
+3. Ejecutando desde el código, comprueba que `PyAudioWPatch` está instalado
+   (`pip install PyAudioWPatch`)
 
 ### El vídeo se guarda sin audio
 La app avisa en la barra de estado. Suele ser que FFmpeg no está disponible:
-reinstala las dependencias con `pip install -r requirements.txt`.
+en el ejecutable va incluido, y desde el código se reinstala con
+`pip install -r requirements.txt`.
 
 ### He editado el config y la app no lo respeta
 Si el JSON quedó mal escrito, se apartó como `config.json.bak` y se arrancó con
@@ -231,11 +291,19 @@ Fuentes de audio*.
 
 ## 🤝 Contribuir
 
+¿Un fallo o una idea? Abre un
+[issue](https://github.com/AIWaveSystems/screenRecording/issues). Si reportas un
+problema de grabación, indica tu versión de Windows y qué dispositivos de audio
+tenías seleccionados.
+
+Para contribuir código:
+
 1. Haz un Fork del proyecto
 2. Crea una rama para tu característica (`git checkout -b feature/AmazingFeature`)
-3. Haz commit de tus cambios (`git commit -m 'Add some AmazingFeature'`)
-4. Push a la rama (`git push origin feature/AmazingFeature`)
-5. Abre un Pull Request
+3. Ejecuta las pruebas antes de enviar los cambios
+4. Haz commit de tus cambios (`git commit -m 'Add some AmazingFeature'`)
+5. Push a la rama (`git push origin feature/AmazingFeature`)
+6. Abre un Pull Request
 
 ## 📦 Dependencias Principales
 
@@ -262,7 +330,11 @@ aplicación con una licencia permisiva están detallados en [NOTICE](NOTICE).
 ## ✨ Agradecimientos
 
 - [FFmpeg](https://ffmpeg.org/) por el procesamiento de vídeo
+- [PortAudio](http://www.portaudio.com/) y
+  [PyAudioWPatch](https://github.com/s0d3s/PyAudioWPatch) por hacer viable el
+  loopback WASAPI
+- [python-mss](https://github.com/BoboTiG/python-mss) por la captura de pantalla
 - Todos los contribuidores y usuarios
 
 ---
-Desarrollado con ❤️ por [Ilesandres]
+Desarrollado con ❤️ por [Ilesandres](https://github.com/Ilesandres)
