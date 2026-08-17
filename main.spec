@@ -1,12 +1,21 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
 
+binaries = []
+try:
+    import imageio_ffmpeg
+    ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+    if ffmpeg_exe and os.path.exists(ffmpeg_exe):
+        binaries.append((ffmpeg_exe, '.'))
+except Exception:
+    pass
 
 a = Analysis(
     ['main.py'],
     pathex=[],
-    binaries=[],
+    binaries=binaries,
     datas=[],
-    hiddenimports=[],
+    hiddenimports=['pyaudiowpatch'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -22,7 +31,8 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='main',
+    name='ScreenRecorder',
+    icon='logo.ico',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

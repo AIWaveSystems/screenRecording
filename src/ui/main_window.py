@@ -1,229 +1,1206 @@
+import asyncio
+import os
+import subprocess
+import sys
+
 import cv2
 import mss
-import sounddevice as sd
-from PyQt5.QtWidgets import (
-    QMainWindow, QLabel, QVBoxLayout, QWidget, QPushButton,
-    QComboBox, QDialog, QFormLayout, QLineEdit
-)
-from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QImage, QPixmap
-import os
-import asyncio
 import qasync
-from ..core.recording_manager import RecordingManager
+import sounddevice as sd
+from PyQt5.QtCore import QSize, Qt, QTimer, pyqtSignal
+from PyQt5.QtGui import QColor, QImage, QPainter, QPixmap
+from PyQt5.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QFileDialog,
+    QHBoxLayout,
+    QLabel,
+    QMainWindow,
+    QMessageBox,
+    QPushButton,
+    QSizePolicy,
+    QSlider,
+    QVBoxLayout,
+    QWidget,
+)
+
+from ..config import user_config
+from ..core.audio_capture import LiveAudioMonitor
+from ..core.recording_manager import (
+    MIC,
+    SPEAKERS,
+    RecordingError,
+    RecordingManager,
+)
 from ..core.screen_capture import ScreenCaptureThread
-from ..utils.async_utils import ProcessManager
-from ..config.settings import OUTPUT_DIR, PREVIEW_FPS
-from .audio_settings import AudioSettingsDialog
+from . import icons
+from .audio_settings import AudioSettingsDialog, MicBoostDialog
+
+ICON_SIZE = QSize(18, 18)
+ICON_SIZE_LARGE = QSize(22, 22)
+
+DARK_BG = "#1e1e2e"
+DARK_PANEL = "#2b2b3d"
+DARK_BORDER = "#3e3e5e"
+ACCENT_RED = "#e74c3c"
+ACCENT_GREEN = "#2ecc71"
+ACCENT_BLUE = "#3498db"
+TEXT_PRIMARY = "#f0f0f0"
+TEXT_SECONDARY = "#a0a0b0"
+METER_GREEN = "#2ecc71"
+METER_YELLOW = "#f1c40f"
+METER_RED = "#e74c3c"
+METER_MUTED = "#555565"
+
+STYLESHEET = f"""
+QMainWindow, QWidget {{
+    background-color: {DARK_BG};
+    color: {TEXT_PRIMARY};
+    font-family: 'Segoe UI', Arial, sans-serif;
+    font-size: 13px;
+}}
+QMenuBar {{
+    background-color: {DARK_PANEL};
+    color: {TEXT_PRIMARY};
+}}
+QMenuBar::item:selected {{
+    background-color: {ACCENT_BLUE};
+}}
+QMenu {{
+    background-color: {DARK_PANEL};
+    color: {TEXT_PRIMARY};
+    border: 1px solid {DARK_BORDER};
+}}
+QMenu::item:selected {{
+    background-color: {ACCENT_BLUE};
+}}
+QComboBox {{
+    background-color: {DARK_PANEL};
+    border: 1px solid {DARK_BORDER};
+    border-radius: 4px;
+    padding: 6px 10px;
+    color: {TEXT_PRIMARY};
+    min-height: 24px;
+}}
+QComboBox:hover {{
+    border: 1px solid {ACCENT_BLUE};
+}}
+QComboBox::drop-down {{
+    border: none;
+    width: 24px;
+}}
+QComboBox QAbstractItemView {{
+    background-color: {DARK_PANEL};
+    color: {TEXT_PRIMARY};
+    border: 1px solid {DARK_BORDER};
+    selection-background-color: {ACCENT_BLUE};
+}}
+QPushButton {{
+    background-color: {DARK_PANEL};
+    border: 1px solid {DARK_BORDER};
+    border-radius: 4px;
+    padding: 8px 16px;
+    color: {TEXT_PRIMARY};
+    font-weight: bold;
+    min-height: 28px;
+}}
+QPushButton:hover {{
+    border: 1px solid {ACCENT_BLUE};
+    background-color: #353550;
+}}
+QPushButton:pressed {{
+    background-color: #1a1a2e;
+}}
+QPushButton:disabled {{
+    color: #666;
+    border-color: #444;
+}}
+#recordButton {{
+    background-color: {ACCENT_RED};
+    border: none;
+    border-radius: 6px;
+    padding: 10px 24px;
+    font-size: 15px;
+    font-weight: bold;
+    min-height: 36px;
+}}
+#recordButton:hover {{
+    background-color: #c0392b;
+}}
+#pauseButton {{
+    background-color: {METER_YELLOW};
+    color: #1e1e2e;
+    border: none;
+    border-radius: 6px;
+    padding: 10px 24px;
+    font-size: 15px;
+    font-weight: bold;
+    min-height: 36px;
+}}
+#pauseButton:hover {{
+    background-color: #d4ac0d;
+}}
+#openFolderButton {{
+    background-color: {ACCENT_GREEN};
+    color: #1e1e2e;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 20px;
+    font-weight: bold;
+}}
+#openFolderButton:hover {{
+    background-color: #27ae60;
+}}
+#muteButton {{
+    padding: 4px 6px;
+    font-size: 11px;
+    min-height: 22px;
+    font-weight: bold;
+}}
+#muteButton:checked {{
+    background-color: {ACCENT_RED};
+    border: 1px solid {ACCENT_RED};
+    color: #ffffff;
+}}
+QSlider::groove:vertical {{
+    background: #444;
+    width: 8px;
+    border-radius: 4px;
+}}
+QSlider::handle:vertical {{
+    background: {ACCENT_BLUE};
+    height: 16px;
+    margin: -4px 0;
+    border-radius: 8px;
+}}
+QSlider::sub-page:vertical {{
+    background: {ACCENT_BLUE};
+    border-radius: 4px;
+}}
+QLabel {{
+    color: {TEXT_PRIMARY};
+}}
+#statusLabel {{
+    color: {TEXT_SECONDARY};
+    font-size: 12px;
+    padding: 4px;
+}}
+#timerLabel {{
+    color: {TEXT_PRIMARY};
+    font-size: 18px;
+    font-weight: bold;
+    padding: 4px 10px;
+}}
+#previewLabel {{
+    background-color: #111;
+    border: 2px solid {DARK_BORDER};
+    border-radius: 6px;
+}}
+#channelTitle {{
+    color: {TEXT_PRIMARY};
+    font-size: 11px;
+    font-weight: bold;
+}}
+#channelDevice {{
+    color: {TEXT_SECONDARY};
+    font-size: 9px;
+}}
+#channelValue {{
+    color: {TEXT_SECONDARY};
+    font-size: 10px;
+}}
+#sectionTitle {{
+    color: {ACCENT_BLUE};
+    font-weight: bold;
+    font-size: 13px;
+    padding-top: 4px;
+}}
+#savedPathLabel {{
+    color: {ACCENT_GREEN};
+    font-size: 11px;
+    padding: 2px;
+    background-color: {DARK_PANEL};
+    border: 1px solid {DARK_BORDER};
+    border-radius: 3px;
+}}
+"""
+
 
 def get_screen_list():
-    """Retorna una lista con las pantallas disponibles usando mss."""
     screens = []
     with mss.mss() as sct:
-        monitors = sct.monitors[1:]  # Ignorar el monitor primario
-        for i, monitor in enumerate(monitors, start=1):
-            # Ajustar el monitor para incluir el cursor
-            monitor_with_cursor = {
-                'top': monitor['top'],
-                'left': monitor['left'],
-                'width': monitor['width'],
-                'height': monitor['height'],
-                'mon': i,
-            }
+        for i, monitor in enumerate(sct.monitors[1:], start=1):
             screens.append({
-                'name': f"Monitor {i}",
-                'monitor': monitor_with_cursor
+                'name': f"Monitor {i} ({monitor['width']}x{monitor['height']})",
+                'monitor': {
+                    'top': monitor['top'],
+                    'left': monitor['left'],
+                    'width': monitor['width'],
+                    'height': monitor['height'],
+                    'mon': i,
+                },
             })
     return screens
+
+
+class AudioMeterWidget(QWidget):
+    """Medidor de nivel vertical estilo OBS."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._level = 0.0
+        self._muted = False
+        self.setFixedWidth(18)
+        self.setMinimumHeight(110)
+        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+
+    def set_level(self, level):
+        level = max(0.0, min(1.0, level))
+        if abs(level - self._level) > 0.005:
+            self._level = level
+            self.update()
+
+    def set_muted(self, muted):
+        if muted != self._muted:
+            self._muted = muted
+            self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        bar_w = self.width()
+        bar_h = max(1, self.height())
+
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor("#333"))
+        painter.drawRoundedRect(0, 0, bar_w, bar_h, 3, 3)
+
+        if self._level <= 0:
+            painter.end()
+            return
+
+        if self._muted:
+            fill_h = int(bar_h * self._level)
+            painter.setBrush(QColor(METER_MUTED))
+            painter.drawRoundedRect(1, bar_h - fill_h, bar_w - 2, fill_h, 2, 2)
+            painter.end()
+            return
+
+        for low, high, color in ((0.0, 0.6, METER_GREEN),
+                                 (0.6, 0.85, METER_YELLOW),
+                                 (0.85, 1.0, METER_RED)):
+            top = min(self._level, high)
+            if top <= low:
+                continue
+            band_h = int(bar_h * (top - low))
+            if band_h < 1:
+                continue
+            painter.setBrush(QColor(color))
+            painter.drawRect(1, int(bar_h * (1.0 - top)), bar_w - 2, band_h)
+
+        painter.end()
+
+
+class AudioChannelPanel(QWidget):
+    """Columna de un canal de audio: nivel, volumen y silencio."""
+
+    volume_changed = pyqtSignal(float)
+    mute_toggled = pyqtSignal(bool)
+
+    def __init__(self, title, icon_name, parent=None):
+        super().__init__(parent)
+        self._title_text = title
+        self._icon_name = icon_name
+        self._compact = False
+        self._boost_text = ""
+        self.setFixedWidth(96)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(2, 2, 2, 2)
+        layout.setSpacing(3)
+
+        self._icon = QLabel()
+        self._icon.setAlignment(Qt.AlignCenter)
+        self._icon.setPixmap(icons.pixmap(icon_name, ACCENT_BLUE).scaled(
+            22, 22, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        layout.addWidget(self._icon)
+
+        self._title = QLabel(title)
+        self._title.setObjectName("channelTitle")
+        self._title.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self._title)
+
+        self._device = QLabel("-")
+        self._device.setObjectName("channelDevice")
+        self._device.setAlignment(Qt.AlignCenter)
+        self._device.setWordWrap(True)
+        self._device.setFixedHeight(24)
+        layout.addWidget(self._device)
+
+        self._value = QLabel("100%")
+        self._value.setObjectName("channelValue")
+        self._value.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self._value)
+
+        body = QHBoxLayout()
+        body.setSpacing(6)
+        body.setAlignment(Qt.AlignHCenter)
+
+        self.meter = AudioMeterWidget()
+        body.addWidget(self.meter)
+
+        self.slider = QSlider(Qt.Vertical)
+        self.slider.setRange(0, 200)
+        self.slider.setValue(100)
+        self.slider.setTickPosition(QSlider.TicksRight)
+        self.slider.setTickInterval(25)
+        self.slider.setMinimumHeight(110)
+        self.slider.valueChanged.connect(self._on_slider)
+        body.addWidget(self.slider)
+
+        layout.addLayout(body, 1)
+
+        self.mute_button = QPushButton()
+        self.mute_button.setObjectName("muteButton")
+        self.mute_button.setCheckable(True)
+        self.mute_button.setIconSize(ICON_SIZE)
+        self.mute_button.toggled.connect(self._on_mute)
+        layout.addWidget(self.mute_button)
+
+        self._refresh_mute_button(False)
+
+    def _refresh_mute_button(self, muted):
+        off_icon = f"{self._icon_name}_off"
+        self.mute_button.setIcon(
+            icons.icon(off_icon if muted else self._icon_name,
+                       "#ffffff" if muted else TEXT_PRIMARY)
+        )
+        self.mute_button.setText("" if self._compact
+                                 else ("Silenciado" if muted else "Silenciar"))
+        self.mute_button.setToolTip(
+            "Silenciado: se graba silencio en esta pista" if muted
+            else "Silenciar esta pista"
+        )
+
+    def _on_slider(self, value):
+        self._update_value_label(value)
+        self.volume_changed.emit(value / 100.0)
+
+    def _update_value_label(self, value):
+        """En modo compacto el refuerzo va solo en el tooltip: no cabe."""
+        suffix = "" if self._compact else self._boost_text
+        self._value.setText(f"{value}%{suffix}")
+
+    def set_boost(self, boost):
+        """Muestra el refuerzo fijo que se suma al volumen de la pista."""
+        extra = int(round((boost - 1.0) * 100))
+        self._boost_text = f" +{extra}%" if extra else ""
+        self._value.setToolTip(
+            f"Volumen {self.slider.value()}% con un refuerzo fijo de +{extra}%"
+            if extra else "Volumen de la pista"
+        )
+        self._update_value_label(self.slider.value())
+
+    def _on_mute(self, muted):
+        self._refresh_mute_button(muted)
+        self.meter.set_muted(muted)
+        self.slider.setEnabled(not muted)
+        self.mute_toggled.emit(muted)
+
+    def set_compact(self, compact):
+        self._compact = bool(compact)
+        self._title.setVisible(not self._compact)
+        self._device.setVisible(not self._compact)
+        self.setFixedWidth(64 if self._compact else 96)
+        self._refresh_mute_button(self.is_muted())
+        self._update_value_label(self.slider.value())
+
+    def set_device_name(self, name):
+        self._device.setText(name or "(sin grabar)")
+        tooltip = f"{self._title_text}: {name}" if name else \
+            f"{self._title_text}: (sin grabar)"
+        self._device.setToolTip(tooltip)
+        self._icon.setToolTip(tooltip)
+        enabled = bool(name)
+        self.slider.setEnabled(enabled and not self.is_muted())
+        self.mute_button.setEnabled(enabled)
+
+    def set_level(self, level):
+        self.meter.set_level(level)
+
+    def get_volume(self):
+        return self.slider.value() / 100.0
+
+    def set_volume(self, volume):
+        self.slider.blockSignals(True)
+        self.slider.setValue(int(round(volume * 100)))
+        self._update_value_label(self.slider.value())
+        self.slider.blockSignals(False)
+
+    def is_muted(self):
+        return self.mute_button.isChecked()
+
+    def set_muted(self, muted):
+        self.mute_button.blockSignals(True)
+        self.mute_button.setChecked(bool(muted))
+        self._refresh_mute_button(bool(muted))
+        self.meter.set_muted(bool(muted))
+        self.slider.setEnabled(not muted)
+        self.mute_button.blockSignals(False)
+
 
 class StreamApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Screen Recorder")
-        self.setGeometry(100, 100, 800, 600)
-        
-        # Inicializar managers
-        self.recording_manager = RecordingManager(OUTPUT_DIR)
-        self.process_manager = ProcessManager()
-        
-        # Variables de estado
+        self.setMinimumSize(900, 650)
+        self.resize(1000, 700)
+        self.setStyleSheet(STYLESHEET)
+
+        self.config = user_config.load()
+        self.preview_fps = self.config['preview']['fps']
+        self.preview_max_width = self.config['preview']['max_width']
+
+        self.recording_manager = RecordingManager(
+            self.config['output_dir'],
+            fps=self.config['video']['fps'],
+            codec=self.config['video']['codec'],
+            mic_boost=self.config['audio']['mic_boost'],
+        )
+        self.compact_mode = self.config['ui']['compact']
+
         self.screens = []
         self.current_screen = None
+        self.capture_thread = None
         self.is_recording = False
-        self.selected_speakers = []
-        self.selected_mics = []
+        self.is_paused = False
+        self._saved_path = None
+        self._live_monitor = LiveAudioMonitor()
+        self._pending_warnings = []
+
         self.audio_devices = self.get_audio_devices()
-        
-        # Inicializar UI
+        self.selected_mics = self._restore_device('mics', 'mic_device')
+        self.selected_speakers = self._restore_device('speakers', 'speaker_device')
+
+        self._save_timer = QTimer(self)
+        self._save_timer.setSingleShot(True)
+        self._save_timer.setInterval(700)
+        self._save_timer.timeout.connect(self._save_config)
+
         self.init_ui()
-        
-        # Configurar loop asíncrono
-        self.loop = asyncio.get_event_loop()
+        self._restore_geometry()
+        self._apply_audio_config()
+        self._start_live_monitor()
+
+        if not self.recording_manager.ffmpeg_available():
+            self._pending_warnings.append(
+                "FFmpeg no encontrado: se grabará vídeo sin audio mezclado."
+            )
+        if self._pending_warnings:
+            self.status_label.setText(self._pending_warnings[0])
 
     def get_audio_devices(self):
-        """Obtiene la lista de dispositivos de audio disponibles."""
         devices = {'speakers': [], 'mics': []}
         try:
             device_list = sd.query_devices()
-            default_input = sd.default.device[0]
-            default_output = sd.default.device[1]
-            
-            for i, device in enumerate(device_list):
-                device_info = {
+
+            default_names = set()
+            for kind in ('input', 'output'):
+                try:
+                    default_names.add(sd.query_devices(kind=kind)['name'])
+                except Exception:
+                    pass
+
+            def hostapi_name(index):
+                return sd.query_hostapis(index)['name']
+
+            wasapi = [i for i, d in enumerate(device_list)
+                      if 'wasapi' in hostapi_name(d['hostapi']).lower()]
+            indices = wasapi or range(len(device_list))
+
+            seen = {'speakers': set(), 'mics': set()}
+            for i in indices:
+                device = device_list[i]
+                info = {
                     'id': i,
                     'name': device['name'],
-                    'channels': device.get('max_output_channels', 0),
-                    'is_default': (i == default_input or i == default_output)
+                    'is_default': device['name'] in default_names,
                 }
-                
-                if device.get('max_output_channels', 0) > 0:
-                    devices['speakers'].append(device_info)
-                if device.get('max_input_channels', 0) > 0:
-                    devices['mics'].append(device_info)
-            
-            print("Dispositivos de audio disponibles:")
-            print(f"Micrófono predeterminado: {device_list[default_input]['name']}")
-            print(f"Parlante predeterminado: {device_list[default_output]['name']}")
-            
-        except Exception as e:
-            print(f"Error al obtener dispositivos de audio: {str(e)}")
+                for kind, channels in (('speakers', 'max_output_channels'),
+                                       ('mics', 'max_input_channels')):
+                    if device.get(channels, 0) > 0 and device['name'] not in seen[kind]:
+                        seen[kind].add(device['name'])
+                        devices[kind].append(info)
+        except Exception as exc:
+            print(f"Error al obtener dispositivos de audio: {exc}")
         return devices
 
+    def _default_selection(self, kind):
+        candidates = self.audio_devices[kind]
+        if not candidates:
+            return []
+        for device in candidates:
+            if device['is_default']:
+                return [device]
+        return [candidates[0]]
+
+    def _restore_device(self, kind, config_key):
+        """Resuelve el dispositivo guardado por nombre, no por índice.
+
+        Los índices cambian al conectar o quitar hardware, así que un índice
+        guardado apuntaría a otro aparato en el siguiente arranque.
+        """
+        stored = self.config['audio'].get(config_key, user_config.USE_SYSTEM_DEFAULT)
+        if stored is None:
+            return []
+        if stored == user_config.USE_SYSTEM_DEFAULT:
+            return self._default_selection(kind)
+        for device in self.audio_devices[kind]:
+            if device['name'] == stored:
+                return [device]
+        self._pending_warnings.append(
+            f"El dispositivo guardado '{stored}' ya no está disponible; "
+            "se usa el predeterminado."
+        )
+        return self._default_selection(kind)
+
     def init_ui(self):
-        # Widget central y layout principal
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-        layout = QVBoxLayout(central_widget)
+        self._build_menu()
 
-        # Botón de configuración de audio
-        self.audio_button = QPushButton("Configuración de Audio")
-        self.audio_button.clicked.connect(self.show_audio_settings)
-        layout.addWidget(self.audio_button)
+        central = QWidget()
+        self.setCentralWidget(central)
+        root = QHBoxLayout(central)
+        root.setContentsMargins(8, 8, 8, 8)
+        root.setSpacing(8)
 
-        # Selector de pantalla
+        left_panel = QVBoxLayout()
+        left_panel.setSpacing(6)
+        right_panel = QVBoxLayout()
+        right_panel.setSpacing(6)
+
+        top_bar = QHBoxLayout()
+        top_bar.setSpacing(8)
+
         self.screen_selector = QComboBox()
         self.screen_selector.currentIndexChanged.connect(self.update_screen_selection)
-        layout.addWidget(self.screen_selector)
+        top_bar.addWidget(self.screen_selector, 1)
 
-        # Preview
+        self.audio_button = QPushButton()
+        self.audio_button.setIcon(icons.icon('sliders', TEXT_PRIMARY))
+        self.audio_button.setIconSize(ICON_SIZE)
+        self.audio_button.clicked.connect(self.show_audio_settings)
+        top_bar.addWidget(self.audio_button)
+
+        self.compact_button = QPushButton()
+        self.compact_button.setIcon(icons.icon('compact', TEXT_PRIMARY))
+        self.compact_button.setIconSize(ICON_SIZE)
+        self.compact_button.setCheckable(True)
+        self.compact_button.setFixedWidth(44)
+        self.compact_button.setToolTip("Alternar entre iconos y texto")
+        self.compact_button.toggled.connect(self._on_compact_toggled)
+        top_bar.addWidget(self.compact_button)
+        left_panel.addLayout(top_bar)
+
         self.preview_label = QLabel()
+        self.preview_label.setObjectName("previewLabel")
         self.preview_label.setAlignment(Qt.AlignCenter)
-        self.preview_label.setMinimumSize(640, 360)  # Tamaño mínimo para el preview
-        layout.addWidget(self.preview_label)
+        self.preview_label.setMinimumSize(480, 270)
+        self.preview_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        left_panel.addWidget(self.preview_label, 1)
 
-        # Botón de grabación
-        self.record_button = QPushButton("Iniciar Grabación")
+        status_row = QHBoxLayout()
+        status_row.setSpacing(8)
+
+        self.status_label = QLabel("Listo")
+        self.status_label.setObjectName("statusLabel")
+        status_row.addWidget(self.status_label, 1)
+
+        self.saved_path_label = QLabel("")
+        self.saved_path_label.setObjectName("savedPathLabel")
+        self.saved_path_label.setVisible(False)
+        self.saved_path_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        status_row.addWidget(self.saved_path_label, 1)
+
+        left_panel.addLayout(status_row)
+
+        controls_row = QHBoxLayout()
+        controls_row.setSpacing(8)
+
+        self.record_button = QPushButton()
+        self.record_button.setObjectName("recordButton")
+        self.record_button.setIconSize(ICON_SIZE_LARGE)
         self.record_button.clicked.connect(self.toggle_recording)
-        layout.addWidget(self.record_button)
+        controls_row.addWidget(self.record_button)
 
-        # Timer para actualizar el preview
-        self.preview_timer = QTimer()
+        self.pause_button = QPushButton()
+        self.pause_button.setObjectName("pauseButton")
+        self.pause_button.setIconSize(ICON_SIZE_LARGE)
+        self.pause_button.setVisible(False)
+        self.pause_button.clicked.connect(self.toggle_pause)
+        controls_row.addWidget(self.pause_button)
+
+        self.open_folder_button = QPushButton()
+        self.open_folder_button.setObjectName("openFolderButton")
+        self.open_folder_button.setIcon(icons.icon('folder', "#1e1e2e"))
+        self.open_folder_button.setIconSize(ICON_SIZE)
+        self.open_folder_button.setVisible(False)
+        self.open_folder_button.clicked.connect(self._open_recording_folder)
+        controls_row.addWidget(self.open_folder_button)
+
+        self.timer_label = QLabel("00:00")
+        self.timer_label.setObjectName("timerLabel")
+        self.timer_label.setVisible(False)
+        controls_row.addWidget(self.timer_label)
+
+        controls_row.addStretch()
+        left_panel.addLayout(controls_row)
+
+        audio_section = QLabel("Mezclador")
+        audio_section.setObjectName("sectionTitle")
+        audio_section.setAlignment(Qt.AlignCenter)
+        right_panel.addWidget(audio_section)
+
+        self.mic_panel = AudioChannelPanel("MICRÓFONO", 'mic')
+        self.mic_panel.volume_changed.connect(
+            lambda value: self._on_volume_changed(MIC, value)
+        )
+        self.mic_panel.mute_toggled.connect(
+            lambda muted: self._on_mute_toggled(MIC, muted)
+        )
+
+        self.speaker_panel = AudioChannelPanel("SISTEMA", 'speaker')
+        self.speaker_panel.volume_changed.connect(
+            lambda value: self._on_volume_changed(SPEAKERS, value)
+        )
+        self.speaker_panel.mute_toggled.connect(
+            lambda muted: self._on_mute_toggled(SPEAKERS, muted)
+        )
+
+        audio_row = QHBoxLayout()
+        audio_row.setSpacing(4)
+        audio_row.setAlignment(Qt.AlignHCenter)
+        audio_row.addWidget(self.mic_panel)
+        audio_row.addWidget(self.speaker_panel)
+
+        right_panel.addLayout(audio_row, 1)
+
+        root.addLayout(left_panel, 3)
+        root.addLayout(right_panel, 0)
+
+        self._meter_timer = QTimer(self)
+        self._meter_timer.timeout.connect(self._update_meters)
+        self._meter_timer.start(50)
+
+        self.preview_timer = QTimer(self)
         self.preview_timer.timeout.connect(self.update_preview)
-        self.preview_timer.start(1000 // PREVIEW_FPS)  # Usar PREVIEW_FPS para la actualización
+        self.preview_timer.start(max(1, 1000 // self.preview_fps))
 
-        # Actualizar lista de pantallas
         self.update_screen_list()
+        self._apply_compact_mode(self.compact_mode)
+
+    def _build_menu(self):
+        menu = self.menuBar()
+
+        archivo = menu.addMenu("Archivo")
+        archivo.addAction(icons.icon('folder', TEXT_PRIMARY),
+                          "Abrir carpeta de grabaciones", self._open_output_folder)
+        archivo.addAction(icons.icon('folder', TEXT_PRIMARY),
+                          "Cambiar carpeta de salida...", self._choose_output_folder)
+        archivo.addSeparator()
+        archivo.addAction(icons.icon('exit', TEXT_PRIMARY), "Salir", self.close)
+
+        config = menu.addMenu("Configuración")
+        config.addAction(icons.icon('sliders', TEXT_PRIMARY),
+                         "Fuentes de audio...", self.show_audio_settings)
+        config.addAction(icons.icon('boost', TEXT_PRIMARY),
+                         "Refuerzo del micrófono...", self.show_mic_boost)
+        config.addSeparator()
+        config.addAction(icons.icon('gear', TEXT_PRIMARY),
+                         "Abrir carpeta de configuración", self._open_config_folder)
+        config.addAction(icons.icon('reset', TEXT_PRIMARY),
+                         "Restablecer configuración", self._reset_config)
+
+        vista = menu.addMenu("Ver")
+        self.compact_action = vista.addAction(
+            icons.icon('compact', TEXT_PRIMARY), "Solo iconos"
+        )
+        self.compact_action.setCheckable(True)
+        self.compact_action.setChecked(self.compact_mode)
+        self.compact_action.setShortcut("Ctrl+I")
+        self.compact_action.toggled.connect(self._on_compact_toggled)
+
+    def _apply_audio_config(self):
+        audio = self.config['audio']
+        self.mic_panel.set_volume(audio['mic_volume'])
+        self.mic_panel.set_muted(audio['mic_muted'])
+        self.mic_panel.set_boost(audio['mic_boost'])
+        self.speaker_panel.set_volume(audio['speaker_volume'])
+        self.speaker_panel.set_muted(audio['speaker_muted'])
+        self.speaker_panel.set_boost(1.0)
+        self._refresh_channel_labels()
+
+    def _on_compact_toggled(self, compact):
+        if compact == self.compact_mode:
+            return
+        self._apply_compact_mode(compact)
+        self._schedule_save()
+
+    def _apply_compact_mode(self, compact):
+        """Alterna entre botones con texto y botones de solo icono."""
+        self.compact_mode = bool(compact)
+
+        for widget in (self.compact_button, self.compact_action):
+            widget.blockSignals(True)
+            widget.setChecked(self.compact_mode)
+            widget.blockSignals(False)
+
+        self.audio_button.setText("" if self.compact_mode else "Audio")
+        self.audio_button.setFixedWidth(44 if self.compact_mode else 90)
+        self.audio_button.setToolTip("Fuentes de audio")
+
+        self.open_folder_button.setText("" if self.compact_mode else "Abrir carpeta")
+        self.open_folder_button.setToolTip("Abrir la carpeta de la grabación")
+
+        self.mic_panel.set_compact(self.compact_mode)
+        self.speaker_panel.set_compact(self.compact_mode)
+
+        self._refresh_transport_buttons()
+
+    def _refresh_transport_buttons(self):
+        """Texto e icono de grabar y pausar según el estado y el modo de vista."""
+        if self.is_recording:
+            self.record_button.setIcon(icons.icon('stop', "#ffffff"))
+            record_text = "Detener"
+        else:
+            self.record_button.setIcon(icons.icon('record', "#ffffff"))
+            record_text = "Iniciar Grabacion"
+        self.record_button.setText("" if self.compact_mode else record_text)
+        self.record_button.setToolTip(record_text)
+
+        if self.is_paused:
+            self.pause_button.setIcon(icons.icon('play', "#1e1e2e"))
+            pause_text = "Reanudar"
+        else:
+            self.pause_button.setIcon(icons.icon('pause', "#1e1e2e"))
+            pause_text = "Pausa"
+        self.pause_button.setText("" if self.compact_mode else pause_text)
+        self.pause_button.setToolTip(pause_text)
+
+    def _refresh_channel_labels(self):
+        self.mic_panel.set_device_name(
+            self.selected_mics[0]['name'] if self.selected_mics else None
+        )
+        self.speaker_panel.set_device_name(
+            self.selected_speakers[0]['name'] if self.selected_speakers else None
+        )
+
+    def _on_volume_changed(self, key, value):
+        self.recording_manager.set_volume(key, value)
+        self._schedule_save()
+
+    def _on_mute_toggled(self, key, muted):
+        self.recording_manager.set_muted(key, muted)
+        self._schedule_save()
+
+    def _start_live_monitor(self):
+        mic_id = self.selected_mics[0]['id'] if self.selected_mics else None
+        spk_id = self.selected_speakers[0]['id'] if self.selected_speakers else None
+        self._live_monitor.start(mic_id, spk_id)
+
+    def _update_meters(self):
+        if self.is_recording:
+            levels = self.recording_manager.get_levels()
+            mic_level = levels.get(MIC, 0.0)
+            spk_level = levels.get(SPEAKERS, 0.0)
+            self.timer_label.setText(
+                self._format_elapsed(self.recording_manager.elapsed_seconds())
+            )
+        else:
+            levels = self._live_monitor.get_levels()
+            mic_level = levels.get('mic', 0.0)
+            spk_level = levels.get('speakers', 0.0)
+
+        boost = self.recording_manager.mic_boost
+        self.mic_panel.set_level(mic_level * self.mic_panel.get_volume() * boost)
+        self.speaker_panel.set_level(spk_level * self.speaker_panel.get_volume())
+
+    @staticmethod
+    def _format_elapsed(seconds):
+        total = int(seconds)
+        hours, remainder = divmod(total, 3600)
+        minutes, secs = divmod(remainder, 60)
+        if hours:
+            return f"{hours:d}:{minutes:02d}:{secs:02d}"
+        return f"{minutes:02d}:{secs:02d}"
 
     def update_preview(self):
-        """Actualiza el preview con el último frame capturado."""
-        if hasattr(self, 'capture_thread') and self.capture_thread.isRunning():
-            frame = self.capture_thread.last_frame
-            if frame is not None:
-                try:
-                    # Redimensionar el frame para el preview
-                    height, width = frame.shape[:2]
-                    preview_width = min(640, width)
-                    preview_height = int(height * (preview_width / width))
-                    
-                    frame_resized = cv2.resize(frame, (preview_width, preview_height))
-                    frame_rgb = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
-                    
-                    h, w, ch = frame_rgb.shape
-                    bytes_per_line = ch * w
-                    
-                    image = QImage(frame_rgb.data, w, h, bytes_per_line, QImage.Format_RGB888)
-                    pixmap = QPixmap.fromImage(image)
-                    self.preview_label.setPixmap(pixmap)
+        if self.capture_thread is None or not self.capture_thread.isRunning():
+            return
 
-                    # Si estamos grabando, escribir el frame original
-                    if self.is_recording and self.recording_manager.video_writer:
-                        self.recording_manager.write_frame(frame)
-                except Exception as e:
-                    print(f"Error en update_preview: {str(e)}")
+        frame = self.capture_thread.latest_frame
+        if frame is None:
+            return
+
+        try:
+            if self.is_recording:
+                self.recording_manager.write_frame(frame)
+
+            height, width = frame.shape[:2]
+            preview_width = min(self.preview_max_width, width)
+            preview_height = max(1, int(height * (preview_width / width)))
+
+            frame_resized = cv2.resize(
+                frame, (preview_width, preview_height), interpolation=cv2.INTER_AREA
+            )
+            frame_rgb = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
+
+            h, w, ch = frame_rgb.shape
+            image = QImage(frame_rgb.data, w, h, ch * w, QImage.Format_RGB888)
+            self.preview_label.setPixmap(QPixmap.fromImage(image.copy()))
+        except Exception as exc:
+            print(f"Error en update_preview: {exc}")
 
     @qasync.asyncSlot()
     async def toggle_recording(self):
-        """Maneja el inicio/detención de la grabación de manera asíncrona."""
         if not self.is_recording:
-            self.record_button.setEnabled(False)
-            self.record_button.setText("Iniciando grabación...")
-            
-            success = await self.recording_manager.start_recording(
+            await self.start_recording()
+        else:
+            await self.stop_recording()
+
+    async def start_recording(self):
+        if self.current_screen is None or not self.screens:
+            QMessageBox.warning(self, "Sin monitor",
+                                "No hay ninguna pantalla seleccionada.")
+            return
+        if self.capture_thread is None or not self.capture_thread.isRunning():
+            QMessageBox.warning(self, "Sin captura",
+                                "No hay ninguna pantalla capturándose.")
+            return
+
+        self.record_button.setEnabled(False)
+        self._saved_path = None
+        self.saved_path_label.setVisible(False)
+        self.open_folder_button.setVisible(False)
+        self._live_monitor.stop()
+
+        volumes = {
+            MIC: self.mic_panel.get_volume(),
+            SPEAKERS: self.speaker_panel.get_volume(),
+        }
+        muted = {
+            MIC: self.mic_panel.is_muted(),
+            SPEAKERS: self.speaker_panel.is_muted(),
+        }
+
+        try:
+            self.recording_manager.start(
                 self.screens[self.current_screen]['monitor'],
                 self.selected_speakers,
-                self.selected_mics
+                self.selected_mics,
+                volumes=volumes,
+                muted=muted,
             )
-            
-            if success:
-                self.is_recording = True
-                self.record_button.setText("Detener Grabación")
-            else:
-                self.record_button.setText("Iniciar Grabación")
-            
+        except RecordingError as exc:
+            QMessageBox.critical(self, "No se pudo iniciar la grabación", str(exc))
             self.record_button.setEnabled(True)
-        else:
-            self.record_button.setEnabled(False)
-            self.record_button.setText("Deteniendo grabación...")
-            
-            await self.recording_manager.stop_recording()
+            self.status_label.setText("Listo")
+            self._start_live_monitor()
+            return
+        except Exception as exc:
+            QMessageBox.critical(self, "Error inesperado", str(exc))
+            self.record_button.setEnabled(True)
+            self._start_live_monitor()
+            return
+
+        self.is_recording = True
+        self.is_paused = False
+        self._refresh_transport_buttons()
+        self.record_button.setEnabled(True)
+        self.pause_button.setVisible(True)
+        self.timer_label.setText("00:00")
+        self.timer_label.setVisible(True)
+        self.screen_selector.setEnabled(False)
+        self.audio_button.setEnabled(False)
+        self.status_label.setText("Grabando...")
+
+    async def stop_recording(self):
+        self.record_button.setEnabled(False)
+        self.pause_button.setEnabled(False)
+        if not self.compact_mode:
+            self.record_button.setText("Procesando...")
+        self.status_label.setText("Cerrando archivos...")
+
+        try:
+            paths = self.recording_manager.stop()
             self.is_recording = False
-            self.record_button.setText("Iniciar Grabación")
-            self.record_button.setEnabled(True)
+            self.is_paused = False
+
+            if paths:
+                self.status_label.setText("Mezclando audio y vídeo...")
+                loop = asyncio.get_event_loop()
+                result = await loop.run_in_executor(
+                    None, self.recording_manager.finalize, paths
+                )
+                self._saved_path = result
+                self.status_label.setText("Grabación guardada")
+                self.saved_path_label.setText(result)
+                self.saved_path_label.setToolTip(result)
+                self.saved_path_label.setVisible(True)
+                self.open_folder_button.setVisible(True)
+        except Exception as exc:
+            import traceback
+            traceback.print_exc()
+            self.status_label.setText(f"Error al guardar: {exc}")
+            self.is_recording = False
+            self.is_paused = False
+
+        self._refresh_transport_buttons()
+        self.record_button.setEnabled(True)
+        self.pause_button.setVisible(False)
+        self.pause_button.setEnabled(True)
+        self.timer_label.setVisible(False)
+        self.screen_selector.setEnabled(True)
+        self.audio_button.setEnabled(True)
+        self._start_live_monitor()
+
+    def toggle_pause(self):
+        if not self.is_recording:
+            return
+        if self.is_paused:
+            self.recording_manager.resume()
+            self.is_paused = False
+            self.status_label.setText("Grabando...")
+        else:
+            self.recording_manager.pause()
+            self.is_paused = True
+            self.status_label.setText("Pausado")
+        self._refresh_transport_buttons()
 
     def update_screen_list(self):
-        """Actualiza la lista de pantallas disponibles."""
         self.screens = get_screen_list()
+        self.screen_selector.blockSignals(True)
         self.screen_selector.clear()
-        
-        for i, screen in enumerate(self.screens):
-            self.screen_selector.addItem(f"{screen['name']} (Monitor {i + 1})")
-            
-        if self.screens:
-            self.current_screen = 0
-            self.screen_selector.setCurrentIndex(0)
+        for screen in self.screens:
+            self.screen_selector.addItem(screen['name'])
+        self.screen_selector.blockSignals(False)
+
+        if not self.screens:
+            QMessageBox.critical(self, "Sin monitores",
+                                 "No se detectó ningún monitor para capturar.")
+            return
+
+        stored = self.config['monitor'].get('index', 0)
+        index = stored if 0 <= stored < len(self.screens) else 0
+        self.screen_selector.setCurrentIndex(index)
+        self.update_screen_selection(index)
 
     def update_screen_selection(self, index):
-        """Actualiza la selección de pantalla."""
-        if 0 <= index < len(self.screens):
-            self.current_screen = index
-            if hasattr(self, 'capture_thread') and self.capture_thread is not None:
-                self.capture_thread.stop()
-            self.start_capture_thread()
+        if not (0 <= index < len(self.screens)) or self.is_recording:
+            return
+
+        self.current_screen = index
+        self.stop_capture_thread()
+        self.start_capture_thread()
+        self._schedule_save()
 
     def start_capture_thread(self):
-        """Inicia el thread de captura de pantalla."""
-        if self.current_screen is not None:
-            monitor = self.screens[self.current_screen]['monitor']
-            self.capture_thread = ScreenCaptureThread(monitor)
-            self.capture_thread.update_image_signal.connect(self.update_preview)
-            self.capture_thread.start()
+        if self.current_screen is None:
+            return
+        monitor = self.screens[self.current_screen]['monitor']
+        self.capture_thread = ScreenCaptureThread(
+            monitor,
+            fps=self.config['video']['fps'],
+            draw_cursor=self.config['video']['capture_cursor'],
+            parent=self,
+        )
+        self.capture_thread.start()
+
+    def stop_capture_thread(self):
+        thread = self.capture_thread
+        if thread is None:
+            return
+        self.capture_thread = None
+        thread.stop()
+        if thread.isFinished():
+            thread.deleteLater()
+        else:
+            thread.finished.connect(thread.deleteLater)
+        self.preview_label.clear()
+
+    def show_mic_boost(self):
+        dialog = MicBoostDialog(self.recording_manager.mic_boost, self)
+        if not dialog.exec_():
+            return
+        boost = dialog.boost()
+        self.recording_manager.set_mic_boost(boost)
+        self.mic_panel.set_boost(self.recording_manager.mic_boost)
+        extra = int(round((self.recording_manager.mic_boost - 1.0) * 100))
+        self.status_label.setText(f"Refuerzo del micrófono: +{extra}%")
+        self._save_config()
 
     def show_audio_settings(self):
-        """Muestra el diálogo de configuración de audio."""
+        if self.is_recording:
+            QMessageBox.information(
+                self, "Grabación en curso",
+                "Detén la grabación para cambiar los dispositivos de audio."
+            )
+            return
         dialog = AudioSettingsDialog(self)
-        dialog.exec_()
+        if dialog.exec_():
+            self._refresh_channel_labels()
+            self._start_live_monitor()
+            self._schedule_save()
+
+    def _schedule_save(self):
+        self._save_timer.start()
+
+    def _collect_config(self):
+        config = dict(self.config)
+        config['output_dir'] = self.recording_manager.output_dir
+        config['audio'] = dict(self.config['audio'])
+        config['audio'].update({
+            'mic_device': self.selected_mics[0]['name'] if self.selected_mics else None,
+            'speaker_device': (self.selected_speakers[0]['name']
+                               if self.selected_speakers else None),
+            'mic_volume': self.mic_panel.get_volume(),
+            'speaker_volume': self.speaker_panel.get_volume(),
+            'mic_muted': self.mic_panel.is_muted(),
+            'speaker_muted': self.speaker_panel.is_muted(),
+            'mic_boost': self.recording_manager.mic_boost,
+        })
+        config['ui'] = dict(self.config.get('ui', {}))
+        config['ui']['compact'] = self.compact_mode
+        config['monitor'] = dict(self.config['monitor'])
+        if self.current_screen is not None and self.screens:
+            monitor = self.screens[self.current_screen]['monitor']
+            config['monitor'].update({
+                'index': self.current_screen,
+                'width': monitor['width'],
+                'height': monitor['height'],
+            })
+        return config
+
+    def _save_config(self):
+        self.config = self._collect_config()
+        user_config.save(self.config)
+
+    def _open_folder(self, folder):
+        if not folder or not os.path.isdir(folder):
+            QMessageBox.warning(self, "Carpeta no disponible",
+                                f"No existe la carpeta:\n{folder}")
+            return
+        try:
+            if sys.platform == 'win32':
+                os.startfile(folder)
+            elif sys.platform == 'darwin':
+                subprocess.run(['open', folder], check=False)
+            else:
+                subprocess.run(['xdg-open', folder], check=False)
+        except Exception as exc:
+            QMessageBox.warning(self, "No se pudo abrir la carpeta", str(exc))
+
+    def _open_recording_folder(self):
+        if self._saved_path:
+            self._open_folder(os.path.dirname(self._saved_path))
+        else:
+            self._open_output_folder()
+
+    def _open_output_folder(self):
+        self._open_folder(self.recording_manager.output_dir)
+
+    def _open_config_folder(self):
+        folder = user_config.config_dir()
+        os.makedirs(folder, exist_ok=True)
+        if not os.path.exists(user_config.config_path()):
+            self._save_config()
+        self._open_folder(folder)
+
+    def _choose_output_folder(self):
+        if self.is_recording:
+            QMessageBox.information(self, "Grabación en curso",
+                                    "Detén la grabación para cambiar la carpeta.")
+            return
+        folder = QFileDialog.getExistingDirectory(
+            self, "Carpeta para las grabaciones", self.recording_manager.output_dir
+        )
+        if not folder:
+            return
+        if not os.access(folder, os.W_OK):
+            QMessageBox.warning(self, "Carpeta no escribible",
+                                "No hay permisos de escritura en esa carpeta.")
+            return
+        self.recording_manager.output_dir = folder
+        self.status_label.setText(f"Las grabaciones se guardarán en {folder}")
+        self._save_config()
+
+    def _reset_config(self):
+        answer = QMessageBox.question(
+            self, "Restablecer configuración",
+            "Se volverá a los valores por defecto. La configuración actual se "
+            "guardará como config.json.bak.\n\n¿Continuar?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+
+        self.config = user_config.reset()
+        self.recording_manager.output_dir = self.config['output_dir']
+        self.recording_manager.set_mic_boost(self.config['audio']['mic_boost'])
+        self.selected_mics = self._restore_device('mics', 'mic_device')
+        self.selected_speakers = self._restore_device('speakers', 'speaker_device')
+        self._apply_audio_config()
+        self._apply_compact_mode(self.config['ui']['compact'])
+        self._start_live_monitor()
+        self.status_label.setText("Configuración restablecida")
+
+    def _restore_geometry(self):
+        state = user_config.load_state()
+        geometry = state.get('window')
+        if not isinstance(geometry, dict):
+            return
+        try:
+            available = QApplication.desktop().availableGeometry(self)
+            width = min(int(geometry['width']), available.width())
+            height = min(int(geometry['height']), available.height())
+            x = int(geometry['x'])
+            y = int(geometry['y'])
+            if not available.contains(x, y):
+                x, y = available.x() + 40, available.y() + 40
+            self.setGeometry(x, y, width, height)
+        except Exception:
+            pass
+
+    def _save_state(self):
+        rect = self.geometry()
+        user_config.save_state({
+            'window': {
+                'x': rect.x(), 'y': rect.y(),
+                'width': rect.width(), 'height': rect.height(),
+            },
+        })
 
     def closeEvent(self, event):
-        """Maneja el cierre de la aplicación."""
-        # Detener grabación si está activa
+        self.preview_timer.stop()
+        self._meter_timer.stop()
+        self._save_timer.stop()
+
+        self._live_monitor.stop()
+
         if self.is_recording:
-            self.loop.run_until_complete(self.recording_manager.stop_recording())
-        
-        # Limpiar recursos
-        if hasattr(self, 'capture_thread') and self.capture_thread is not None:
-            self.capture_thread.stop()
-        
+            try:
+                paths = self.recording_manager.stop()
+                self.is_recording = False
+                if paths:
+                    self.recording_manager.finalize(paths)
+            except Exception as exc:
+                print(f"[closeEvent] error deteniendo grabación: {exc}")
+
+        self.stop_capture_thread()
         self.recording_manager.cleanup()
-        self.process_manager.stop_all()
-        
-        event.accept() 
+
+        self._save_config()
+        self._save_state()
+
+        event.accept()
+        QApplication.quit()
