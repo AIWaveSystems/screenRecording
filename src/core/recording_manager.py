@@ -252,10 +252,15 @@ class RecordingManager:
         print("\n=== Deteniendo grabación ===")
 
         for track in self._tracks:
-            track.stop()
+            try:
+                track.stop()
+            except Exception as exc:
+                print(f"[stop] error deteniendo pista: {exc}")
         self._tracks.clear()
 
         self._stop_video()
+
+        time.sleep(0.1)
 
         paths = self._paths
         self._paths = None

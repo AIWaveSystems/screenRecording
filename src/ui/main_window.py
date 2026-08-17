@@ -594,25 +594,31 @@ class StreamApp(QMainWindow):
         self.record_button.setText("Procesando...")
         self.status_label.setText("Cerrando archivos...")
 
-        if self.is_paused:
-            self.recording_manager.resume()
+        try:
+            if self.is_paused:
+                self.recording_manager.resume()
+                self.is_paused = False
+
+            paths = self.recording_manager.stop()
+            self.is_recording = False
             self.is_paused = False
 
-        paths = self.recording_manager.stop()
-        self.is_recording = False
-        self.is_paused = False
-
-        if paths:
-            self.status_label.setText("Mezclando audio y vídeo...")
-            loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(
-                None, self.recording_manager.finalize, paths
-            )
-            self._saved_path = result
-            self.status_label.setText(f"Guardado: {result}")
-            self.saved_path_label.setText(result)
-            self.saved_path_label.setVisible(True)
-            self.open_folder_button.setVisible(True)
+            if paths:
+                self.status_label.setText("Mezclando audio y vídeo...")
+                loop = asyncio.get_event_loop()
+                result = await loop.run_in_executor(
+                    None, self.recording_manager.finalize, paths
+                )
+                self._saved_path = result
+                self.status_label.setText(f"Guardado: {result}")
+                self.saved_path_label.setText(result)
+                self.saved_path_label.setVisible(True)
+                self.open_folder_button.setVisible(True)
+        except Exception as exc:
+            import traceback
+            print(f"[stop_recording] error: {exc}")
+            traceback.print_exc()
+            self.status_label.setText(f"Error al guardar: {exc}")
 
         self.record_button.setText("Iniciar Grabacion")
         self.record_button.setEnabled(True)
@@ -622,7 +628,10 @@ class StreamApp(QMainWindow):
         self.audio_button.setEnabled(True)
         self.mic_slider.setEnabled(True)
         self.speaker_slider.setEnabled(True)
-        self._start_live_monitor()
+        try:
+            self._start_live_monitor()
+        except Exception as exc:
+            print(f"[stop_recording] error reiniciando monitor: {exc}")
 
     def toggle_pause(self):
         if not self.is_recording:
