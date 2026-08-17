@@ -306,23 +306,25 @@ def find_stereo_mix_device():
 class LiveAudioMonitor:
     """Monitorea niveles de audio en vivo sin grabar.
 
-    Abre un InputStream por cada dispositivo seleccionado y calcula el RMS
-    en tiempo real para alimentar los medidores de la UI.
+    Para micrófono usa sounddevice InputStream (dispositivo de entrada).
+    Para parlante usa soundcard loopback WASAPI (captura la salida del sistema).
     """
 
     def __init__(self):
         self._streams = {}
+        self._threads = {}
         self._levels = {}
+        self._running = {}
         self._lock = threading.Lock()
 
     def start(self, mic_device_id=None, speaker_device_id=None):
         self.stop()
         if mic_device_id is not None:
-            self._add_stream('mic', mic_device_id)
+            self._add_input_stream('mic', mic_device_id)
         if speaker_device_id is not None:
-            self._add_stream('speakers', speaker_device_id)
+            self._add_loopback_stream('speakers', speaker_device_id)
 
-    def _add_stream(self, label, device_id):
+    def _add_input_stream(self, label, device_id):
         try:
             info = sd.query_devices(device_id)
             channels = max(1, min(AUDIO_MAX_CHANNELS, int(info.get('max_input_channels', 1))))
@@ -356,9 +358,73 @@ class LiveAudioMonitor:
                 self._streams[label] = stream
                 self._levels[label] = 0.0
         except Exception as exc:
-            print(f"[LiveMonitor] no se pudo abrir '{label}': {exc}")
+            print(f"[LiveMonitor] no se pudo abrir micrófono: {exc}")
+
+    def _add_loopback_stream(self, label, speaker_device_id):
+        try:
+            import soundcard as sc
+        except ImportError:
+            print("[LiveMonitor] soundcard no instalado, no se puede monitorear parlante")
+            return
+
+        try:
+            speaker_info = sd.query_devices(speaker_device_id)
+            speaker_name = speaker_info['name']
+
+            speaker = None
+            needle = speaker_name[:28].lower()
+            for candidate in sc.all_speakers():
+                name = candidate.name.lower()
+                if name.startswith(needle) or needle.startswith(name[:28]):
+                    speaker = candidate
+                    break
+            if speaker is None:
+                speaker = sc.default_speaker()
+            if speaker is None:
+                return
+
+            mic = sc.get_microphone(id=str(speaker.name), include_loopback=True)
+            if mic is None:
+                print(f"[LiveMonitor] '{speaker.name}' no admite loopback")
+                return
+
+            channels = max(1, min(AUDIO_MAX_CHANNELS, mic.channels or AUDIO_MAX_CHANNELS))
+
+            with self._lock:
+                self._running[label] = True
+
+            def _capture():
+                try:
+                    with mic.recorder(
+                        samplerate=AUDIO_SAMPLE_RATE,
+                        channels=channels,
+                        blocksize=AUDIO_CHUNK_SIZE,
+                    ) as recorder:
+                        while self._running.get(label, False):
+                            data = recorder.record(numframes=AUDIO_CHUNK_SIZE)
+                            rms = float(np.sqrt(np.mean(data.astype(np.float64) ** 2)))
+                            level = min(1.0, rms * 3.0)
+                            with self._lock:
+                                self._levels[label] = level
+                except Exception as exc:
+                    print(f"[LiveMonitor] error loopback '{label}': {exc}")
+
+            t = threading.Thread(target=_capture, name=f"live-monitor-{label}", daemon=True)
+            t.start()
+            with self._lock:
+                self._threads[label] = t
+                self._levels[label] = 0.0
+        except Exception as exc:
+            print(f"[LiveMonitor] no se pudo abrir parlante: {exc}")
 
     def stop(self):
+        with self._lock:
+            for label in list(self._running):
+                self._running[label] = False
+        for t in self._threads.values():
+            t.join(timeout=2)
+        self._threads.clear()
+
         with self._lock:
             for stream in self._streams.values():
                 try:
