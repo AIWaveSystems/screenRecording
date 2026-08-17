@@ -45,3 +45,6 @@ videos/**
 # Mantener estructura de carpetas en git (opcional con .gitkeep)
 !recordings/.gitkeep
 !videos/.gitkeep
+
+# Salidas de pruebas
+_smoke_out/
