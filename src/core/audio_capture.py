@@ -82,8 +82,14 @@ class BaseTrack:
         self._channels = 1
         self._samplerate = AUDIO_SAMPLE_RATE
         self.volume = 1.0
+        self.boost = 1.0
         self.level = 0.0
         self._level_lock = threading.Lock()
+
+    @property
+    def gain(self):
+        """Ganancia total: el volumen elegido más el refuerzo fijo de la pista."""
+        return self.volume * self.boost
 
     @property
     def is_paused(self):
@@ -135,7 +141,7 @@ class BaseTrack:
             block = np.zeros_like(block)
             self._wav.writeframes(block.astype(np.int16).tobytes())
         else:
-            data = np.clip(block * self.volume, -1.0, 1.0)
+            data = np.clip(block * self.gain, -1.0, 1.0)
             self._wav.writeframes((data * 32767).astype(np.int16).tobytes())
         return len(block)
 
