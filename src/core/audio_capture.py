@@ -14,6 +14,12 @@ import sounddevice as sd
 
 warnings.filterwarnings("ignore", message=".*data discontinuity.*")
 
+try:
+    from soundcard.mediafoundation import SoundcardRuntimeWarning
+    warnings.filterwarnings("ignore", category=SoundcardRuntimeWarning)
+except ImportError:
+    pass
+
 from ..config.settings import (
     AUDIO_CHUNK_SIZE,
     AUDIO_MAX_CHANNELS,
