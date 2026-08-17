@@ -495,12 +495,12 @@ class StreamApp(QMainWindow):
                     mic_level = level
                 else:
                     spk_level = level
-            self.mic_meter.set_level(mic_level)
-            self.speaker_meter.set_level(spk_level)
+            self.mic_meter.set_level(mic_level * self.mic_slider.get_volume())
+            self.speaker_meter.set_level(spk_level * self.speaker_slider.get_volume())
         else:
             levels = self._live_monitor.get_levels()
-            self.mic_meter.set_level(levels.get('mic', 0.0))
-            self.speaker_meter.set_level(levels.get('speakers', 0.0))
+            self.mic_meter.set_level(levels.get('mic', 0.0) * self.mic_slider.get_volume())
+            self.speaker_meter.set_level(levels.get('speakers', 0.0) * self.speaker_slider.get_volume())
 
     def _start_live_monitor(self):
         mic_id = self.selected_mics[0]['id'] if self.selected_mics else None
