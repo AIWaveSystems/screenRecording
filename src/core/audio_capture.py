@@ -301,3 +301,74 @@ def find_stereo_mix_device():
         ):
             return i
     return None
+
+
+class LiveAudioMonitor:
+    """Monitorea niveles de audio en vivo sin grabar.
+
+    Abre un InputStream por cada dispositivo seleccionado y calcula el RMS
+    en tiempo real para alimentar los medidores de la UI.
+    """
+
+    def __init__(self):
+        self._streams = {}
+        self._levels = {}
+        self._lock = threading.Lock()
+
+    def start(self, mic_device_id=None, speaker_device_id=None):
+        self.stop()
+        if mic_device_id is not None:
+            self._add_stream('mic', mic_device_id)
+        if speaker_device_id is not None:
+            self._add_stream('speakers', speaker_device_id)
+
+    def _add_stream(self, label, device_id):
+        try:
+            info = sd.query_devices(device_id)
+            channels = max(1, min(AUDIO_MAX_CHANNELS, int(info.get('max_input_channels', 1))))
+            if channels < 1:
+                return
+
+            for rate in (AUDIO_SAMPLE_RATE, int(info.get('default_samplerate', 48000))):
+                try:
+                    sd.check_input_settings(
+                        device=device_id, channels=channels,
+                        samplerate=rate, dtype='float32',
+                    )
+                    break
+                except Exception:
+                    continue
+            else:
+                return
+
+            def callback(indata, frames, time_info, status, _label=label):
+                rms = float(np.sqrt(np.mean(indata.astype(np.float64) ** 2)))
+                level = min(1.0, rms * 3.0)
+                with self._lock:
+                    self._levels[_label] = level
+
+            stream = sd.InputStream(
+                device=device_id, channels=channels, samplerate=rate,
+                blocksize=AUDIO_CHUNK_SIZE, dtype='float32', callback=callback,
+            )
+            stream.start()
+            with self._lock:
+                self._streams[label] = stream
+                self._levels[label] = 0.0
+        except Exception as exc:
+            print(f"[LiveMonitor] no se pudo abrir '{label}': {exc}")
+
+    def stop(self):
+        with self._lock:
+            for stream in self._streams.values():
+                try:
+                    stream.stop()
+                    stream.close()
+                except Exception:
+                    pass
+            self._streams.clear()
+            self._levels.clear()
+
+    def get_levels(self):
+        with self._lock:
+            return dict(self._levels)

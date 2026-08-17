@@ -26,6 +26,7 @@ from PyQt5.QtWidgets import (
 )
 
 from ..config.settings import OUTPUT_DIR, PREVIEW_FPS, PREVIEW_MAX_WIDTH
+from ..core.audio_capture import LiveAudioMonitor
 from ..core.recording_manager import RecordingError, RecordingManager
 from ..core.screen_capture import ScreenCaptureThread
 from .audio_settings import AudioSettingsDialog
@@ -320,8 +321,10 @@ class StreamApp(QMainWindow):
         self.selected_speakers = self._default_selection('speakers')
         self._saved_path = None
         self._meter_timer = None
+        self._live_monitor = LiveAudioMonitor()
 
         self.init_ui()
+        self._start_live_monitor()
 
         if not self.recording_manager.ffmpeg_available():
             self.status_label.setText(
@@ -483,20 +486,26 @@ class StreamApp(QMainWindow):
         self.update_screen_list()
 
     def _update_meters(self):
-        if not self.is_recording:
-            self.mic_meter.set_level(0)
-            self.speaker_meter.set_level(0)
-            return
-        levels = self.recording_manager.get_track_levels()
-        mic_level = 0.0
-        spk_level = 0.0
-        for label, level in levels.items():
-            if 'Micr' in label or 'mic' in label.lower():
-                mic_level = level
-            else:
-                spk_level = level
-        self.mic_meter.set_level(mic_level)
-        self.speaker_meter.set_level(spk_level)
+        if self.is_recording:
+            levels = self.recording_manager.get_track_levels()
+            mic_level = 0.0
+            spk_level = 0.0
+            for label, level in levels.items():
+                if 'Micr' in label or 'mic' in label.lower():
+                    mic_level = level
+                else:
+                    spk_level = level
+            self.mic_meter.set_level(mic_level)
+            self.speaker_meter.set_level(spk_level)
+        else:
+            levels = self._live_monitor.get_levels()
+            self.mic_meter.set_level(levels.get('mic', 0.0))
+            self.speaker_meter.set_level(levels.get('speakers', 0.0))
+
+    def _start_live_monitor(self):
+        mic_id = self.selected_mics[0]['id'] if self.selected_mics else None
+        spk_id = self.selected_speakers[0]['id'] if self.selected_speakers else None
+        self._live_monitor.start(mic_id, spk_id)
 
     def update_preview(self):
         if self.capture_thread is None or not self.capture_thread.isRunning():
@@ -539,6 +548,7 @@ class StreamApp(QMainWindow):
         self._saved_path = None
         self.saved_path_label.setVisible(False)
         self.open_folder_button.setVisible(False)
+        self._live_monitor.stop()
 
         mic_vol = self.mic_slider.get_volume()
         spk_vol = self.speaker_slider.get_volume()
@@ -612,6 +622,7 @@ class StreamApp(QMainWindow):
         self.audio_button.setEnabled(True)
         self.mic_slider.setEnabled(True)
         self.speaker_slider.setEnabled(True)
+        self._start_live_monitor()
 
     def toggle_pause(self):
         if not self.is_recording:
@@ -677,12 +688,14 @@ class StreamApp(QMainWindow):
 
     def show_audio_settings(self):
         dialog = AudioSettingsDialog(self)
-        dialog.exec_()
+        if dialog.exec_():
+            self._start_live_monitor()
 
     def closeEvent(self, event):
         self.preview_timer.stop()
         if self._meter_timer:
             self._meter_timer.stop()
+        self._live_monitor.stop()
 
         if self.is_recording:
             if self.is_paused:
