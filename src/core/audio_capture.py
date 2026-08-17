@@ -43,6 +43,26 @@ class BaseTrack:
         self._wav = None
         self._writer = None
         self._running = False
+        self._paused = False
+        self.volume = 1.0
+        self.level = 0.0
+        self._level_lock = threading.Lock()
+
+    @property
+    def is_paused(self):
+        return self._paused
+
+    def set_paused(self, paused):
+        self._paused = paused
+
+    def get_level(self):
+        with self._level_lock:
+            return self.level
+
+    def _update_level(self, block):
+        rms = float(np.sqrt(np.mean(block.astype(np.float64) ** 2)))
+        with self._level_lock:
+            self.level = min(1.0, rms * 3.0)
 
     def _open_wav(self, channels, samplerate):
         self._wav = wave.open(self.path, 'wb')
@@ -72,7 +92,11 @@ class BaseTrack:
             if block is None:
                 return
             try:
-                data = np.clip(block, -1.0, 1.0)
+                self._update_level(block)
+                if self._paused:
+                    continue
+                scaled = block * self.volume
+                data = np.clip(scaled, -1.0, 1.0)
                 self._wav.writeframes((data * 32767).astype(np.int16).tobytes())
             except Exception as exc:
                 print(f"[{self.label}] error al escribir audio: {exc}")
@@ -86,6 +110,8 @@ class BaseTrack:
         if self._wav is not None:
             self._wav.close()
             self._wav = None
+        with self._level_lock:
+            self.level = 0.0
         if self.dropped_blocks:
             print(f"[{self.label}] {self.dropped_blocks} bloques descartados")
 

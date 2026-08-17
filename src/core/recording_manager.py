@@ -28,6 +28,7 @@ class RecordingManager:
     def __init__(self, output_dir):
         self.output_dir = output_dir
         self.is_recording = False
+        self.is_paused = False
         self.frames_written = 0
         self._frame_provider = None
         self._video_writer = None
@@ -35,6 +36,8 @@ class RecordingManager:
         self._video_size = None
         self._start_time = None
         self._stop_time = None
+        self._pause_time = None
+        self._total_paused = 0.0
         self._tracks = []
         self._paths = None
 
@@ -149,8 +152,14 @@ class RecordingManager:
 
         while True:
             end = self._stop_time
-            now = end if end is not None else time.perf_counter()
-            target = int((now - self._start_time) * VIDEO_FPS)
+            if end is not None:
+                now = end
+            elif self.is_paused:
+                time.sleep(frame_time / 2)
+                continue
+            else:
+                now = time.perf_counter()
+            target = int((now - self._start_time - self._total_paused) * VIDEO_FPS)
 
             frame = self._frame_provider() if self._frame_provider else None
             frame = self._fit(frame, width, height) if frame is not None else black
@@ -162,6 +171,43 @@ class RecordingManager:
             if end is not None:
                 return
             time.sleep(frame_time / 2)
+
+    def pause(self):
+        """Pausa la grabación."""
+        if not self.is_recording or self.is_paused:
+            return
+        self.is_paused = True
+        self._pause_time = time.perf_counter()
+        for track in self._tracks:
+            track.set_paused(True)
+        print("=== Grabación pausada ===")
+
+    def resume(self):
+        """Reanuda la grabación."""
+        if not self.is_recording or not self.is_paused:
+            return
+        if self._pause_time is not None:
+            self._total_paused += time.perf_counter() - self._pause_time
+            self._pause_time = None
+        self.is_paused = False
+        for track in self._tracks:
+            track.set_paused(False)
+        print("=== Grabación reanudada ===")
+
+    def get_track_levels(self):
+        """Devuelve dict con nivel RMS de cada pista activa."""
+        return {track.label: track.get_level() for track in self._tracks}
+
+    def get_track_volumes(self):
+        """Devuelve dict con volumen de cada pista activa."""
+        return {track.label: track.volume for track in self._tracks}
+
+    def set_track_volume(self, label, volume):
+        """Ajusta el volumen de una pista por su etiqueta."""
+        for track in self._tracks:
+            if track.label == label:
+                track.volume = max(0.0, min(2.0, volume))
+                return
 
     @staticmethod
     def _fit(frame, width, height):
@@ -178,6 +224,9 @@ class RecordingManager:
             return None
 
         self.is_recording = False
+        self.is_paused = False
+        self._pause_time = None
+        self._total_paused = 0.0
         print("\n=== Deteniendo grabación ===")
 
         for track in self._tracks:
