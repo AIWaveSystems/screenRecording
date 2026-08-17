@@ -21,6 +21,7 @@
     "speaker_volume": 1.0,
     "mic_muted": false,
     "speaker_muted": false,
+    "mic_boost": 1.15,
     "sample_rate": 48000
   },
 
@@ -28,5 +29,9 @@
     "index": 0,
     "width": 1920,
     "height": 1080
+  },
+
+  "ui": {
+    "compact": false
   }
 }

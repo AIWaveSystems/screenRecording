@@ -12,6 +12,9 @@ AUDIO_MAX_CHANNELS = 2
 AUDIO_SAMPLE_RATE = 48000
 AUDIO_CHUNK_SIZE = 1024
 AUDIO_QUEUE_MAX = 512
+MIC_BOOST = 1.15
+
+COMPACT_UI = False
 
 OUTPUT_DIR = os.path.join(os.path.expanduser('~'), 'ScreenRecordings')
 os.makedirs(OUTPUT_DIR, exist_ok=True)

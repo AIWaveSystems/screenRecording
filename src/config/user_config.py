@@ -70,12 +70,16 @@ def defaults():
             'speaker_volume': 1.0,
             'mic_muted': False,
             'speaker_muted': False,
+            'mic_boost': settings.MIC_BOOST,
             'sample_rate': settings.AUDIO_SAMPLE_RATE,
         },
         'monitor': {
             'index': 0,
             'width': None,
             'height': None,
+        },
+        'ui': {
+            'compact': settings.COMPACT_UI,
         },
     }
 
@@ -132,11 +136,16 @@ def _validate(config):
         value = audio.get(key, USE_SYSTEM_DEFAULT)
         audio[key] = value if value is None or isinstance(value, str) \
             else USE_SYSTEM_DEFAULT
+    audio['mic_boost'] = _as_float(audio.get('mic_boost'), 1.0, 3.0,
+                                   base['audio']['mic_boost'])
     audio['sample_rate'] = _as_int(audio.get('sample_rate'), 8000, 192000,
                                    base['audio']['sample_rate'])
 
     monitor = config.setdefault('monitor', {})
     monitor['index'] = _as_int(monitor.get('index'), 0, 63, 0)
+
+    ui = config.setdefault('ui', {})
+    ui['compact'] = _as_bool(ui.get('compact'), base['ui']['compact'])
 
     output_dir = config.get('output_dir')
     if not isinstance(output_dir, str) or not output_dir.strip():
