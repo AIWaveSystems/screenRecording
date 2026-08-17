@@ -6,7 +6,7 @@ from datetime import datetime
 import cv2
 import numpy as np
 
-from ..config.settings import VIDEO_CODEC, VIDEO_FPS
+from ..config.settings import MIC_BOOST, VIDEO_CODEC, VIDEO_FPS
 from ..utils.video_utils import combine_audio_video, find_ffmpeg
 from .audio_capture import (
     AudioError,
@@ -36,10 +36,12 @@ class RecordingManager:
     aunque el preview corra a menos FPS o la UI se retrase.
     """
 
-    def __init__(self, output_dir, fps=VIDEO_FPS, codec=VIDEO_CODEC):
+    def __init__(self, output_dir, fps=VIDEO_FPS, codec=VIDEO_CODEC,
+                 mic_boost=MIC_BOOST):
         self.output_dir = output_dir
         self.fps = fps
         self.codec = codec
+        self.mic_boost = mic_boost
         self.is_recording = False
         self.is_paused = False
         self.frames_written = 0
@@ -95,6 +97,7 @@ class RecordingManager:
 
             for key, track in pending.items():
                 track.volume = volumes.get(key, 1.0)
+                track.boost = self.mic_boost if key == MIC else 1.0
                 track.set_muted(muted.get(key, False))
                 track.start()
                 self._tracks[key] = track
@@ -220,6 +223,13 @@ class RecordingManager:
         track = self._tracks.get(key)
         if track is not None:
             track.set_muted(muted)
+
+    def set_mic_boost(self, boost):
+        """Refuerzo fijo del micrófono, aplicable también en caliente."""
+        self.mic_boost = max(1.0, min(3.0, boost))
+        track = self._tracks.get(MIC)
+        if track is not None:
+            track.boost = self.mic_boost
 
     def elapsed_seconds(self):
         if not self.is_recording or self._start_time is None:
