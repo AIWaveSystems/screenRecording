@@ -10,8 +10,12 @@ La versión del instalador puede no ser la más reciente del programa.
 - Captura de micrófono, con canales y sample rate negociados con el dispositivo
 - Sincronía audio/vídeo exacta: el vídeo se escribe a FPS constante contra el reloj real
   y el desfase de arranque de cada pista se compensa en la mezcla
+- Mezclador con medidores de nivel, volumen y **silencio por pista**, ajustables
+  también en mitad de la grabación
+- Pausa y reanudación sin descuadrar la duración del archivo
 - Previsualización en tiempo real, independiente de la grabación
 - Soporte para múltiples monitores
+- Configuración persistente entre sesiones (monitor, dispositivos, volúmenes)
 - Salida AVI con compresión XVID, mezclada sin recodificar el vídeo
 
 ## 📋 Requisitos Previos
@@ -56,24 +60,91 @@ python main.py
 2. Selecciona el monitor a grabar
 3. Opcionalmente ajusta las fuentes de audio (por defecto se usan el micrófono y
    la salida predeterminados de Windows)
-4. Pulsa "Iniciar Grabación"
-5. Para terminar, pulsa "Detener Grabación"
+4. Ajusta volúmenes o silencia una pista en el mezclador de la derecha; se puede
+   hacer antes y durante la grabación
+5. Pulsa "Iniciar Grabación"
+6. Para terminar, pulsa "Detener Grabación"
 
-Las grabaciones se guardan en `C:\Users\<usuario>\ScreenRecordings\<fecha>\`.
+Las grabaciones se guardan en `C:\Users\<usuario>\ScreenRecordings\<fecha>\`,
+o en la carpeta que elijas en *Archivo → Cambiar carpeta de salida*.
 
-## 🛠️ Configuración
+**Silenciar no es lo mismo que no grabar.** Una pista silenciada se sigue
+grabando como silencio, así que la duración y la sincronía se mantienen. Para no
+grabar una fuente en absoluto, elige "(Sin grabar)" en *Configuración → Fuentes
+de audio*.
 
-En `src/config/settings.py`:
+## ⚙️ Configuración
 
-| Ajuste | Por defecto | Descripción |
+Los ajustes se guardan solos al cambiarlos y se recuperan al arrancar.
+
+| Sistema | Ruta |
+|---|---|
+| Windows | `%APPDATA%\ScreenRecorder\config.json` |
+| Otros | `~/.config/screen-recorder/config.json` |
+
+La posición de la ventana va aparte, en `state.json`, para que un problema con
+ella no afecte a las preferencias. Consulta la ruta exacta con:
+
+```bash
+python main.py --config-path
+```
+
+### Qué se guarda
+
+| Clave | Por defecto | Descripción |
 |---|---|---|
-| `VIDEO_FPS` | 30 | FPS reales del archivo grabado |
-| `PREVIEW_FPS` | 15 | FPS de la previsualización (no afecta a la grabación) |
-| `VIDEO_CODEC` | `XVID` | FourCC del codec de OpenCV |
-| `PREVIEW_MAX_WIDTH` | 640 | Ancho máximo del preview |
-| `CAPTURE_CURSOR` | `True` | Dibujar el cursor sobre los frames |
-| `AUDIO_MAX_CHANNELS` | 2 | Techo de canales; se negocia con el dispositivo |
-| `AUDIO_SAMPLE_RATE` | 48000 | Preferido; se usa el nativo si no lo admite |
+| `output_dir` | `~\ScreenRecordings` | Carpeta de las grabaciones |
+| `video.fps` | `30` | FPS reales del archivo grabado (1-240) |
+| `video.codec` | `"XVID"` | FourCC de OpenCV, 4 caracteres |
+| `video.capture_cursor` | `true` | Dibujar el cursor sobre los frames |
+| `preview.fps` | `15` | FPS de la previsualización (no afecta a la grabación) |
+| `preview.max_width` | `640` | Ancho máximo del preview (160-3840) |
+| `audio.mic_device` | `"__default__"` | Nombre del micrófono, `"__default__"` para el del sistema o `null` para no grabarlo |
+| `audio.speaker_device` | `"__default__"` | Igual, para la salida de audio |
+| `audio.mic_volume` | `1.0` | Volumen del micrófono (0.0-2.0) |
+| `audio.speaker_volume` | `1.0` | Volumen del audio del sistema (0.0-2.0) |
+| `audio.mic_muted` | `false` | Micrófono silenciado |
+| `audio.speaker_muted` | `false` | Audio del sistema silenciado |
+| `audio.sample_rate` | `48000` | Preferido; se usa el nativo si no se admite |
+| `monitor.index` | `0` | Monitor seleccionado |
+
+Los dispositivos se guardan **por nombre**, no por índice: los índices cambian
+al conectar o quitar hardware. Si el dispositivo guardado ya no existe, se usa
+el predeterminado y se avisa en la barra de estado.
+
+Hay un ejemplo completo en [config.example.json](config.example.json).
+
+### Editarlo y restablecerlo
+
+El archivo es JSON y se puede editar a mano con cualquier editor; los cambios se
+aplican al siguiente arranque. Si queda mal escrito, la aplicación **no falla**:
+lo aparta como `config.json.bak` y arranca con los valores por defecto. Los
+valores fuera de rango se corrigen en silencio en lugar de descartar el archivo
+entero.
+
+Desde el menú *Configuración*: **Abrir carpeta de configuración** y
+**Restablecer configuración** (que también deja una copia `.bak`).
+
+Borrar la carpeta a mano es seguro: la aplicación vuelve a los valores por
+defecto en el siguiente arranque.
+
+### Modo portable
+
+Si colocas un archivo vacío llamado `portable.txt` junto al ejecutable, la
+configuración y los logs se guardan en subcarpetas de la propia aplicación en
+lugar de en `%APPDATA%`. Útil para llevarla en un USB sin dejar rastro.
+
+### Desinstalar
+
+No hay instalador, así que la limpieza la hace la propia aplicación:
+
+```bash
+python main.py --purge        # o: ScreenRecorder.exe --purge
+```
+
+Muestra qué carpetas va a borrar con su tamaño y pide confirmación. Borra
+configuración y logs. **Tus grabaciones no se tocan**: se ofrecen aparte, en una
+segunda pregunta que por defecto responde que no.
 
 ## 📁 Estructura del Proyecto
 
@@ -81,7 +152,8 @@ En `src/config/settings.py`:
 screenRecording/
 ├── src/
 │   ├── config/
-│   │   └── settings.py            # Configuración global
+│   │   ├── settings.py            # Valores por defecto
+│   │   └── user_config.py         # Configuración persistente del usuario
 │   ├── core/
 │   │   ├── screen_capture.py      # Hilo de captura + cursor
 │   │   ├── audio_capture.py       # Pistas de micrófono y loopback
@@ -89,33 +161,46 @@ screenRecording/
 │   ├── utils/
 │   │   └── video_utils.py         # Mezcla con FFmpeg
 │   └── ui/
-│       ├── main_window.py         # Ventana principal
+│       ├── main_window.py         # Ventana principal y mezclador
 │       └── audio_settings.py      # Diálogo de fuentes de audio
-├── tests/                         # Pruebas manuales (ver abajo)
+├── tests/                         # Pruebas (ver abajo)
+├── config.example.json            # Configuración de referencia
 ├── main.py                        # Punto de entrada
 └── requirements.txt
 ```
 
 ## 🧪 Pruebas
 
-Scripts manuales que ejercitan el hardware real:
-
 ```bash
-python tests/smoke_test.py   # graba 6s y verifica duración, sincronía y mezcla
-python tests/ui_test.py      # abre la ventana, graba, para y cierra
+python tests/config_test.py  # configuración: round-trip, corrupción, migración
+python tests/smoke_test.py   # graba 6s: duración, sincronía, mute y mezcla
+python tests/ui_test.py      # ventana: grabar, pausar, silenciar, cerrar
 python tests/leak_test.py    # comprueba que no se filtran handles GDI
 ```
+
+Salvo `config_test.py`, todas ejercitan el hardware real: capturan la pantalla y
+abren dispositivos de audio.
 
 ## 🔍 Solución de Problemas
 
 ### No se captura el audio del sistema
-1. Comprueba que `soundcard` está instalado (`pip install soundcard`)
+1. Comprueba que `PyAudioWPatch` está instalado (`pip install PyAudioWPatch`)
 2. Verifica que la salida elegida es la que realmente está sonando
-3. Si el equipo no admite loopback, se usa "Mezcla estéreo" como alternativa
+3. Si el equipo no expone loopback, se usa "Mezcla estéreo" como alternativa
 
 ### El vídeo se guarda sin audio
 La app avisa en la barra de estado. Suele ser que FFmpeg no está disponible:
 reinstala las dependencias con `pip install -r requirements.txt`.
+
+### He editado el config y la app no lo respeta
+Si el JSON quedó mal escrito, se apartó como `config.json.bak` y se arrancó con
+los valores por defecto. Revísalo con cualquier validador de JSON. Los valores
+fuera de rango se corrigen solos: revisa los límites en la tabla de arriba.
+
+### No recuerda mi micrófono
+Los dispositivos se guardan por nombre. Si Windows lo renombró (pasa al cambiar
+de puerto USB o actualizar drivers), vuelve a elegirlo en *Configuración →
+Fuentes de audio*.
 
 ## 🤝 Contribuir
 
@@ -131,8 +216,8 @@ reinstala las dependencias con `pip install -r requirements.txt`.
 - `numpy`: manipulación de frames y audio
 - `PyQt5` + `qasync`: interfaz gráfica y bucle asíncrono
 - `mss`: captura de pantalla
-- `sounddevice`: captura de micrófono
-- `soundcard`: loopback WASAPI del audio del sistema
+- `sounddevice`: captura de micrófono y enumeración de dispositivos
+- `PyAudioWPatch`: loopback WASAPI del audio del sistema
 - `imageio-ffmpeg`: binario de FFmpeg para la mezcla
 - `pywin32`: cursor y APIs de Windows
 
