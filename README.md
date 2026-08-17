@@ -12,6 +12,9 @@ La versión del instalador puede no ser la más reciente del programa.
   y el desfase de arranque de cada pista se compensa en la mezcla
 - Mezclador con medidores de nivel, volumen y **silencio por pista**, ajustables
   también en mitad de la grabación
+- **Refuerzo del micrófono** configurable, para que la voz destaque sobre el
+  audio del sistema
+- Interfaz con iconos, con modo compacto de solo iconos (`Ctrl+I`)
 - Pausa y reanudación sin descuadrar la duración del archivo
 - Previsualización en tiempo real, independiente de la grabación
 - Soporte para múltiples monitores
@@ -73,6 +76,24 @@ grabando como silencio, así que la duración y la sincronía se mantienen. Para
 grabar una fuente en absoluto, elige "(Sin grabar)" en *Configuración → Fuentes
 de audio*.
 
+### Refuerzo del micrófono
+
+El micrófono se graba con una ganancia extra fija (**+15% por defecto**) además
+de su volumen, para que la voz quede por encima del audio del sistema sin tener
+que bajar este último. Se ajusta entre 0% y +100% en *Configuración → Refuerzo
+del micrófono*, y se aplica también en mitad de una grabación.
+
+En el mezclador aparece junto al volumen, por ejemplo `100% +15%`. La señal se
+recorta antes de saturar, pero un refuerzo alto sobre un micrófono que ya graba
+fuerte puede distorsionar: 10-20% es el rango sensato.
+
+### Iconos o texto
+
+Toda la interfaz funciona en dos modos: con **texto e iconos**, o **solo
+iconos** para ahorrar espacio. Se alterna con el botón de la barra superior, en
+*Ver → Solo iconos* o con `Ctrl+I`, y la elección se recuerda. En modo compacto
+cada botón conserva su descripción en el tooltip.
+
 ## ⚙️ Configuración
 
 Los ajustes se guardan solos al cambiarlos y se recuperan al arrancar.
@@ -105,8 +126,10 @@ python main.py --config-path
 | `audio.speaker_volume` | `1.0` | Volumen del audio del sistema (0.0-2.0) |
 | `audio.mic_muted` | `false` | Micrófono silenciado |
 | `audio.speaker_muted` | `false` | Audio del sistema silenciado |
+| `audio.mic_boost` | `1.15` | Refuerzo fijo del micrófono, `1.15` = +15% (1.0-3.0) |
 | `audio.sample_rate` | `48000` | Preferido; se usa el nativo si no se admite |
 | `monitor.index` | `0` | Monitor seleccionado |
+| `ui.compact` | `false` | Interfaz de solo iconos |
 
 Los dispositivos se guardan **por nombre**, no por índice: los índices cambian
 al conectar o quitar hardware. Si el dispositivo guardado ya no existe, se usa
@@ -162,7 +185,8 @@ screenRecording/
 │   │   └── video_utils.py         # Mezcla con FFmpeg
 │   └── ui/
 │       ├── main_window.py         # Ventana principal y mezclador
-│       └── audio_settings.py      # Diálogo de fuentes de audio
+│       ├── icons.py               # Iconos vectoriales sin archivos externos
+│       └── audio_settings.py      # Diálogos de audio y refuerzo
 ├── tests/                         # Pruebas (ver abajo)
 ├── config.example.json            # Configuración de referencia
 ├── main.py                        # Punto de entrada
@@ -172,14 +196,17 @@ screenRecording/
 ## 🧪 Pruebas
 
 ```bash
-python tests/config_test.py  # configuración: round-trip, corrupción, migración
-python tests/smoke_test.py   # graba 6s: duración, sincronía, mute y mezcla
-python tests/ui_test.py      # ventana: grabar, pausar, silenciar, cerrar
-python tests/leak_test.py    # comprueba que no se filtran handles GDI
+python tests/config_test.py     # configuración: round-trip, corrupción, migración
+python tests/boost_test.py      # el refuerzo del micrófono llega al WAV
+python tests/ui_visual_test.py  # iconos, modo compacto y capturas de pantalla
+python tests/smoke_test.py      # graba 6s: duración, sincronía, mute y mezcla
+python tests/ui_test.py         # ventana: grabar, pausar, silenciar, cerrar
+python tests/leak_test.py       # comprueba que no se filtran handles GDI
 ```
 
-Salvo `config_test.py`, todas ejercitan el hardware real: capturan la pantalla y
-abren dispositivos de audio.
+`config_test.py` y `boost_test.py` no tocan hardware; el resto captura la
+pantalla y abre dispositivos de audio reales. `ui_visual_test.py` deja capturas
+de ambos modos de interfaz en `_ui_shots/`.
 
 ## 🔍 Solución de Problemas
 
@@ -223,7 +250,14 @@ Fuentes de audio*.
 
 ## 📄 Licencia
 
-Este proyecto está bajo la Licencia MIT - ver el archivo [LICENSE](LICENSE) para más detalles.
+El **código fuente** está bajo la Licencia MIT — ver [LICENSE](LICENSE), con una
+[traducción informativa al español](LICENSE.es.md) que además explica qué
+implica en la práctica.
+
+El **ejecutable distribuido** es otra cosa: incorpora PyQt5 y una compilación de
+FFmpeg que son GPL v3, así que el binario ya compilado queda sujeto a GPL v3.
+Los componentes de terceros, sus licencias y las alternativas para distribuir la
+aplicación con una licencia permisiva están detallados en [NOTICE](NOTICE).
 
 ## ✨ Agradecimientos
 

@@ -3,6 +3,20 @@
 ## Sin publicar
 
 ### Añadido
+- **Refuerzo del micrófono**: ganancia extra fija (+15% por defecto, ajustable
+  de 0% a +100% desde *Configuración → Refuerzo del micrófono*) que se suma al
+  volumen de la pista para que la voz quede por encima del audio del sistema.
+  Se aplica también en mitad de una grabación y se recorta antes de saturar.
+- **Interfaz con iconos** vectoriales dibujados en código, sin archivos
+  externos, y **modo compacto de solo iconos** conmutable desde la barra
+  superior, *Ver → Solo iconos* o `Ctrl+I`. La elección se recuerda y en modo
+  compacto cada control conserva su descripción en el tooltip.
+- Archivos de licencia: `LICENSE` (MIT), `LICENSE.es.md` (traducción
+  informativa al español) y `NOTICE` con los componentes de terceros y sus
+  licencias verificadas, incluido el aviso de que el ejecutable distribuido
+  queda sujeto a GPL v3 por PyQt5 y la compilación de FFmpeg incorporada.
+- Iconos en los menús y en los botones de silencio, que cambian de forma según
+  el estado de la pista.
 - Configuración persistente en `%APPDATA%\ScreenRecorder\config.json`
   (`schema_version` 1): carpeta de salida, monitor, dispositivos de audio por
   nombre, volúmenes, silencios, FPS y cursor.
