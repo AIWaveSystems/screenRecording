@@ -7,27 +7,31 @@ import cv2
 import mss
 import qasync
 import sounddevice as sd
-from PyQt5.QtCore import Qt, QTimer, QSize
-from PyQt5.QtGui import QColor, QImage, QPixmap, QPainter, QFont
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal
+from PyQt5.QtGui import QColor, QFont, QImage, QPainter, QPixmap
 from PyQt5.QtWidgets import (
     QApplication,
     QComboBox,
-    QFrame,
-    QGraphicsDropShadowEffect,
+    QFileDialog,
     QHBoxLayout,
     QLabel,
     QMainWindow,
     QMessageBox,
     QPushButton,
-    QSlider,
     QSizePolicy,
+    QSlider,
     QVBoxLayout,
     QWidget,
 )
 
-from ..config.settings import OUTPUT_DIR, PREVIEW_FPS, PREVIEW_MAX_WIDTH
+from ..config import user_config
 from ..core.audio_capture import LiveAudioMonitor
-from ..core.recording_manager import RecordingError, RecordingManager
+from ..core.recording_manager import (
+    MIC,
+    SPEAKERS,
+    RecordingError,
+    RecordingManager,
+)
 from ..core.screen_capture import ScreenCaptureThread
 from .audio_settings import AudioSettingsDialog
 
@@ -42,7 +46,7 @@ TEXT_SECONDARY = "#a0a0b0"
 METER_GREEN = "#2ecc71"
 METER_YELLOW = "#f1c40f"
 METER_RED = "#e74c3c"
-
+METER_MUTED = "#555565"
 
 STYLESHEET = f"""
 QMainWindow, QWidget {{
@@ -50,6 +54,21 @@ QMainWindow, QWidget {{
     color: {TEXT_PRIMARY};
     font-family: 'Segoe UI', Arial, sans-serif;
     font-size: 13px;
+}}
+QMenuBar {{
+    background-color: {DARK_PANEL};
+    color: {TEXT_PRIMARY};
+}}
+QMenuBar::item:selected {{
+    background-color: {ACCENT_BLUE};
+}}
+QMenu {{
+    background-color: {DARK_PANEL};
+    color: {TEXT_PRIMARY};
+    border: 1px solid {DARK_BORDER};
+}}
+QMenu::item:selected {{
+    background-color: {ACCENT_BLUE};
 }}
 QComboBox {{
     background-color: {DARK_PANEL};
@@ -128,6 +147,17 @@ QPushButton:disabled {{
 #openFolderButton:hover {{
     background-color: #27ae60;
 }}
+#muteButton {{
+    padding: 4px 6px;
+    font-size: 11px;
+    min-height: 22px;
+    font-weight: bold;
+}}
+#muteButton:checked {{
+    background-color: {ACCENT_RED};
+    border: 1px solid {ACCENT_RED};
+    color: #ffffff;
+}}
 QSlider::groove:vertical {{
     background: #444;
     width: 8px;
@@ -151,17 +181,29 @@ QLabel {{
     font-size: 12px;
     padding: 4px;
 }}
+#timerLabel {{
+    color: {TEXT_PRIMARY};
+    font-size: 18px;
+    font-weight: bold;
+    padding: 4px 10px;
+}}
 #previewLabel {{
     background-color: #111;
     border: 2px solid {DARK_BORDER};
     border-radius: 6px;
 }}
-#meterLabel {{
+#channelTitle {{
+    color: {TEXT_PRIMARY};
+    font-size: 11px;
+    font-weight: bold;
+}}
+#channelDevice {{
+    color: {TEXT_SECONDARY};
+    font-size: 9px;
+}}
+#channelValue {{
     color: {TEXT_SECONDARY};
     font-size: 10px;
-    font-weight: bold;
-    min-width: 16px;
-    max-width: 16px;
 }}
 #sectionTitle {{
     color: {ACCENT_BLUE};
@@ -198,107 +240,158 @@ def get_screen_list():
 
 
 class AudioMeterWidget(QWidget):
-    """Widget de nivel de audio vertical estilo OBS."""
+    """Medidor de nivel vertical estilo OBS."""
 
-    def __init__(self, label_text="", parent=None):
+    def __init__(self, parent=None):
         super().__init__(parent)
         self._level = 0.0
-        self._label_text = label_text
-        self.setFixedWidth(40)
-        self.setMinimumHeight(120)
+        self._muted = False
+        self.setFixedWidth(18)
+        self.setMinimumHeight(110)
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
 
     def set_level(self, level):
-        self._level = max(0.0, min(1.0, level))
-        self.update()
+        level = max(0.0, min(1.0, level))
+        if abs(level - self._level) > 0.005:
+            self._level = level
+            self.update()
+
+    def set_muted(self, muted):
+        if muted != self._muted:
+            self._muted = muted
+            self.update()
 
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
-        w = self.width()
-        h = self.height()
-        bar_w = 14
-        x = (w - bar_w) // 2
-        margin_top = 20
-        margin_bot = 20
-        bar_h = h - margin_top - margin_bot
+        bar_w = self.width()
+        bar_h = max(1, self.height())
 
         painter.setPen(Qt.NoPen)
         painter.setBrush(QColor("#333"))
-        painter.drawRoundedRect(x, margin_top, bar_w, bar_h, 3, 3)
+        painter.drawRoundedRect(0, 0, bar_w, bar_h, 3, 3)
 
-        fill_h = int(bar_h * self._level)
-        if fill_h > 0:
-            y = margin_top + bar_h - fill_h
-            segments = max(1, fill_h // 4)
-            seg_h = fill_h / segments
-            for i in range(segments):
-                sy = y + i * seg_h
-                ratio = (margin_top + bar_h - sy) / bar_h
-                if ratio > 0.85:
-                    color = QColor(METER_RED)
-                elif ratio > 0.6:
-                    color = QColor(METER_YELLOW)
-                else:
-                    color = QColor(METER_GREEN)
-                painter.setBrush(color)
-                painter.drawRoundedRect(x + 1, int(sy) + 1, bar_w - 2,
-                                        int(seg_h) - 1, 2, 2)
+        if self._level <= 0:
+            painter.end()
+            return
 
-        painter.setPen(QColor(TEXT_SECONDARY))
-        font = QFont("Segoe UI", 8)
-        painter.setFont(font)
-        painter.drawText(0, 0, w, 16, Qt.AlignCenter, self._label_text)
+        if self._muted:
+            fill_h = int(bar_h * self._level)
+            painter.setBrush(QColor(METER_MUTED))
+            painter.drawRoundedRect(1, bar_h - fill_h, bar_w - 2, fill_h, 2, 2)
+            painter.end()
+            return
+
+        for low, high, color in ((0.0, 0.6, METER_GREEN),
+                                 (0.6, 0.85, METER_YELLOW),
+                                 (0.85, 1.0, METER_RED)):
+            top = min(self._level, high)
+            if top <= low:
+                continue
+            band_h = int(bar_h * (top - low))
+            if band_h < 1:
+                continue
+            painter.setBrush(QColor(color))
+            painter.drawRect(1, int(bar_h * (1.0 - top)), bar_w - 2, band_h)
 
         painter.end()
 
 
-class VolumeSliderWidget(QWidget):
-    """Slider vertical de volumen con etiqueta y nivel."""
+class AudioChannelPanel(QWidget):
+    """Columna de un canal de audio: nivel, volumen y silencio."""
 
-    def __init__(self, label_text="", parent=None):
+    volume_changed = pyqtSignal(float)
+    mute_toggled = pyqtSignal(bool)
+
+    def __init__(self, title, parent=None):
         super().__init__(parent)
-        self._label_text = label_text
-        self.setFixedWidth(50)
-        self.setMinimumHeight(120)
+        self.setFixedWidth(96)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
+        layout.setContentsMargins(2, 2, 2, 2)
+        layout.setSpacing(3)
 
-        self._label = QLabel(label_text)
-        self._label.setObjectName("meterLabel")
-        self._label.setAlignment(Qt.AlignCenter)
-        self._label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 10px; font-weight: bold;")
-        layout.addWidget(self._label)
+        self._title = QLabel(title)
+        self._title.setObjectName("channelTitle")
+        self._title.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self._title)
 
-        self._value_label = QLabel("100%")
-        self._value_label.setAlignment(Qt.AlignCenter)
-        self._value_label.setStyleSheet(f"color: {TEXT_PRIMARY}; font-size: 10px;")
-        layout.addWidget(self._value_label)
+        self._device = QLabel("-")
+        self._device.setObjectName("channelDevice")
+        self._device.setAlignment(Qt.AlignCenter)
+        self._device.setWordWrap(True)
+        self._device.setFixedHeight(24)
+        layout.addWidget(self._device)
+
+        self._value = QLabel("100%")
+        self._value.setObjectName("channelValue")
+        self._value.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self._value)
+
+        body = QHBoxLayout()
+        body.setSpacing(6)
+        body.setAlignment(Qt.AlignHCenter)
+
+        self.meter = AudioMeterWidget()
+        body.addWidget(self.meter)
 
         self.slider = QSlider(Qt.Vertical)
         self.slider.setRange(0, 200)
         self.slider.setValue(100)
         self.slider.setTickPosition(QSlider.TicksRight)
         self.slider.setTickInterval(25)
-        self.slider.setMinimumHeight(80)
-        layout.addWidget(self.slider, 1)
+        self.slider.setMinimumHeight(110)
+        self.slider.valueChanged.connect(self._on_slider)
+        body.addWidget(self.slider)
 
-        self.slider.valueChanged.connect(self._on_change)
+        layout.addLayout(body, 1)
 
-    def _on_change(self, value):
-        self._value_label.setText(f"{value}%")
+        self.mute_button = QPushButton("Silenciar")
+        self.mute_button.setObjectName("muteButton")
+        self.mute_button.setCheckable(True)
+        self.mute_button.toggled.connect(self._on_mute)
+        layout.addWidget(self.mute_button)
+
+    def _on_slider(self, value):
+        self._value.setText(f"{value}%")
+        self.volume_changed.emit(value / 100.0)
+
+    def _on_mute(self, muted):
+        self.mute_button.setText("Silenciado" if muted else "Silenciar")
+        self.meter.set_muted(muted)
+        self.slider.setEnabled(not muted)
+        self.mute_toggled.emit(muted)
+
+    def set_device_name(self, name):
+        self._device.setText(name or "(sin grabar)")
+        self._device.setToolTip(name or "(sin grabar)")
+        enabled = bool(name)
+        self.slider.setEnabled(enabled and not self.is_muted())
+        self.mute_button.setEnabled(enabled)
+
+    def set_level(self, level):
+        self.meter.set_level(level)
 
     def get_volume(self):
         return self.slider.value() / 100.0
 
-    def set_volume(self, v):
+    def set_volume(self, volume):
         self.slider.blockSignals(True)
-        self.slider.setValue(int(v * 100))
-        self._value_label.setText(f"{int(v * 100)}%")
+        self.slider.setValue(int(round(volume * 100)))
+        self._value.setText(f"{int(round(volume * 100))}%")
         self.slider.blockSignals(False)
+
+    def is_muted(self):
+        return self.mute_button.isChecked()
+
+    def set_muted(self, muted):
+        self.mute_button.blockSignals(True)
+        self.mute_button.setChecked(bool(muted))
+        self.mute_button.setText("Silenciado" if muted else "Silenciar")
+        self.meter.set_muted(bool(muted))
+        self.slider.setEnabled(not muted)
+        self.mute_button.blockSignals(False)
 
 
 class StreamApp(QMainWindow):
@@ -309,27 +402,45 @@ class StreamApp(QMainWindow):
         self.resize(1000, 700)
         self.setStyleSheet(STYLESHEET)
 
-        self.recording_manager = RecordingManager(OUTPUT_DIR)
+        self.config = user_config.load()
+        self.preview_fps = self.config['preview']['fps']
+        self.preview_max_width = self.config['preview']['max_width']
+
+        self.recording_manager = RecordingManager(
+            self.config['output_dir'],
+            fps=self.config['video']['fps'],
+            codec=self.config['video']['codec'],
+        )
 
         self.screens = []
         self.current_screen = None
         self.capture_thread = None
         self.is_recording = False
         self.is_paused = False
-        self.audio_devices = self.get_audio_devices()
-        self.selected_mics = self._default_selection('mics')
-        self.selected_speakers = self._default_selection('speakers')
         self._saved_path = None
-        self._meter_timer = None
         self._live_monitor = LiveAudioMonitor()
+        self._pending_warnings = []
+
+        self.audio_devices = self.get_audio_devices()
+        self.selected_mics = self._restore_device('mics', 'mic_device')
+        self.selected_speakers = self._restore_device('speakers', 'speaker_device')
+
+        self._save_timer = QTimer(self)
+        self._save_timer.setSingleShot(True)
+        self._save_timer.setInterval(700)
+        self._save_timer.timeout.connect(self._save_config)
 
         self.init_ui()
+        self._restore_geometry()
+        self._apply_audio_config()
         self._start_live_monitor()
 
         if not self.recording_manager.ffmpeg_available():
-            self.status_label.setText(
+            self._pending_warnings.append(
                 "FFmpeg no encontrado: se grabará vídeo sin audio mezclado."
             )
+        if self._pending_warnings:
+            self.status_label.setText(self._pending_warnings[0])
 
     def get_audio_devices(self):
         devices = {'speakers': [], 'mics': []}
@@ -376,7 +487,29 @@ class StreamApp(QMainWindow):
                 return [device]
         return [candidates[0]]
 
+    def _restore_device(self, kind, config_key):
+        """Resuelve el dispositivo guardado por nombre, no por índice.
+
+        Los índices cambian al conectar o quitar hardware, así que un índice
+        guardado apuntaría a otro aparato en el siguiente arranque.
+        """
+        stored = self.config['audio'].get(config_key, user_config.USE_SYSTEM_DEFAULT)
+        if stored is None:
+            return []
+        if stored == user_config.USE_SYSTEM_DEFAULT:
+            return self._default_selection(kind)
+        for device in self.audio_devices[kind]:
+            if device['name'] == stored:
+                return [device]
+        self._pending_warnings.append(
+            f"El dispositivo guardado '{stored}' ya no está disponible; "
+            "se usa el predeterminado."
+        )
+        return self._default_selection(kind)
+
     def init_ui(self):
+        self._build_menu()
+
         central = QWidget()
         self.setCentralWidget(central)
         root = QHBoxLayout(central)
@@ -443,34 +576,42 @@ class StreamApp(QMainWindow):
         self.open_folder_button.clicked.connect(self._open_recording_folder)
         controls_row.addWidget(self.open_folder_button)
 
+        self.timer_label = QLabel("00:00")
+        self.timer_label.setObjectName("timerLabel")
+        self.timer_label.setVisible(False)
+        controls_row.addWidget(self.timer_label)
+
         controls_row.addStretch()
         left_panel.addLayout(controls_row)
 
-        right_panel.addStretch()
-
-        self.mic_meter = AudioMeterWidget("MIC")
-        self.mic_slider = VolumeSliderWidget("MIC")
-        self.speaker_meter = AudioMeterWidget("SPK")
-        self.speaker_slider = VolumeSliderWidget("SPK")
-
-        audio_section = QLabel("Audio")
+        audio_section = QLabel("Mezclador")
         audio_section.setObjectName("sectionTitle")
+        audio_section.setAlignment(Qt.AlignCenter)
         right_panel.addWidget(audio_section)
+
+        self.mic_panel = AudioChannelPanel("MICRÓFONO")
+        self.mic_panel.volume_changed.connect(
+            lambda value: self._on_volume_changed(MIC, value)
+        )
+        self.mic_panel.mute_toggled.connect(
+            lambda muted: self._on_mute_toggled(MIC, muted)
+        )
+
+        self.speaker_panel = AudioChannelPanel("SISTEMA")
+        self.speaker_panel.volume_changed.connect(
+            lambda value: self._on_volume_changed(SPEAKERS, value)
+        )
+        self.speaker_panel.mute_toggled.connect(
+            lambda muted: self._on_mute_toggled(SPEAKERS, muted)
+        )
 
         audio_row = QHBoxLayout()
         audio_row.setSpacing(4)
         audio_row.setAlignment(Qt.AlignHCenter)
+        audio_row.addWidget(self.mic_panel)
+        audio_row.addWidget(self.speaker_panel)
 
-        audio_row.addWidget(self.mic_meter)
-        audio_row.addWidget(self.mic_slider)
-        audio_row.addSpacing(8)
-        audio_row.addWidget(self.speaker_meter)
-        audio_row.addWidget(self.speaker_slider)
-
-        right_panel.addLayout(audio_row)
-        right_panel.addStretch()
-
-        right_panel.addStretch()
+        right_panel.addLayout(audio_row, 1)
 
         root.addLayout(left_panel, 3)
         root.addLayout(right_panel, 0)
@@ -481,31 +622,78 @@ class StreamApp(QMainWindow):
 
         self.preview_timer = QTimer(self)
         self.preview_timer.timeout.connect(self.update_preview)
-        self.preview_timer.start(max(1, 1000 // PREVIEW_FPS))
+        self.preview_timer.start(max(1, 1000 // self.preview_fps))
 
         self.update_screen_list()
 
-    def _update_meters(self):
-        if self.is_recording:
-            levels = self.recording_manager.get_track_levels()
-            mic_level = 0.0
-            spk_level = 0.0
-            for label, level in levels.items():
-                if 'Micr' in label or 'mic' in label.lower():
-                    mic_level = level
-                else:
-                    spk_level = level
-            self.mic_meter.set_level(mic_level * self.mic_slider.get_volume())
-            self.speaker_meter.set_level(spk_level * self.speaker_slider.get_volume())
-        else:
-            levels = self._live_monitor.get_levels()
-            self.mic_meter.set_level(levels.get('mic', 0.0) * self.mic_slider.get_volume())
-            self.speaker_meter.set_level(levels.get('speakers', 0.0) * self.speaker_slider.get_volume())
+    def _build_menu(self):
+        menu = self.menuBar()
+
+        archivo = menu.addMenu("Archivo")
+        archivo.addAction("Abrir carpeta de grabaciones", self._open_output_folder)
+        archivo.addAction("Cambiar carpeta de salida...", self._choose_output_folder)
+        archivo.addSeparator()
+        archivo.addAction("Salir", self.close)
+
+        config = menu.addMenu("Configuración")
+        config.addAction("Fuentes de audio...", self.show_audio_settings)
+        config.addSeparator()
+        config.addAction("Abrir carpeta de configuración", self._open_config_folder)
+        config.addAction("Restablecer configuración", self._reset_config)
+
+    def _apply_audio_config(self):
+        audio = self.config['audio']
+        self.mic_panel.set_volume(audio['mic_volume'])
+        self.mic_panel.set_muted(audio['mic_muted'])
+        self.speaker_panel.set_volume(audio['speaker_volume'])
+        self.speaker_panel.set_muted(audio['speaker_muted'])
+        self._refresh_channel_labels()
+
+    def _refresh_channel_labels(self):
+        self.mic_panel.set_device_name(
+            self.selected_mics[0]['name'] if self.selected_mics else None
+        )
+        self.speaker_panel.set_device_name(
+            self.selected_speakers[0]['name'] if self.selected_speakers else None
+        )
+
+    def _on_volume_changed(self, key, value):
+        self.recording_manager.set_volume(key, value)
+        self._schedule_save()
+
+    def _on_mute_toggled(self, key, muted):
+        self.recording_manager.set_muted(key, muted)
+        self._schedule_save()
 
     def _start_live_monitor(self):
         mic_id = self.selected_mics[0]['id'] if self.selected_mics else None
         spk_id = self.selected_speakers[0]['id'] if self.selected_speakers else None
         self._live_monitor.start(mic_id, spk_id)
+
+    def _update_meters(self):
+        if self.is_recording:
+            levels = self.recording_manager.get_levels()
+            mic_level = levels.get(MIC, 0.0)
+            spk_level = levels.get(SPEAKERS, 0.0)
+            self.timer_label.setText(
+                self._format_elapsed(self.recording_manager.elapsed_seconds())
+            )
+        else:
+            levels = self._live_monitor.get_levels()
+            mic_level = levels.get('mic', 0.0)
+            spk_level = levels.get('speakers', 0.0)
+
+        self.mic_panel.set_level(mic_level * self.mic_panel.get_volume())
+        self.speaker_panel.set_level(spk_level * self.speaker_panel.get_volume())
+
+    @staticmethod
+    def _format_elapsed(seconds):
+        total = int(seconds)
+        hours, remainder = divmod(total, 3600)
+        minutes, secs = divmod(remainder, 60)
+        if hours:
+            return f"{hours:d}:{minutes:02d}:{secs:02d}"
+        return f"{minutes:02d}:{secs:02d}"
 
     def update_preview(self):
         if self.capture_thread is None or not self.capture_thread.isRunning():
@@ -520,7 +708,7 @@ class StreamApp(QMainWindow):
                 self.recording_manager.write_frame(frame)
 
             height, width = frame.shape[:2]
-            preview_width = min(PREVIEW_MAX_WIDTH, width)
+            preview_width = min(self.preview_max_width, width)
             preview_height = max(1, int(height * (preview_width / width)))
 
             frame_resized = cv2.resize(
@@ -542,6 +730,10 @@ class StreamApp(QMainWindow):
             await self.stop_recording()
 
     async def start_recording(self):
+        if self.current_screen is None or not self.screens:
+            QMessageBox.warning(self, "Sin monitor",
+                                "No hay ninguna pantalla seleccionada.")
+            return
         if self.capture_thread is None or not self.capture_thread.isRunning():
             QMessageBox.warning(self, "Sin captura",
                                 "No hay ninguna pantalla capturándose.")
@@ -553,30 +745,34 @@ class StreamApp(QMainWindow):
         self.open_folder_button.setVisible(False)
         self._live_monitor.stop()
 
-        mic_vol = self.mic_slider.get_volume()
-        spk_vol = self.speaker_slider.get_volume()
+        volumes = {
+            MIC: self.mic_panel.get_volume(),
+            SPEAKERS: self.speaker_panel.get_volume(),
+        }
+        muted = {
+            MIC: self.mic_panel.is_muted(),
+            SPEAKERS: self.speaker_panel.is_muted(),
+        }
 
         try:
             self.recording_manager.start(
                 self.screens[self.current_screen]['monitor'],
                 self.selected_speakers,
                 self.selected_mics,
+                volumes=volumes,
+                muted=muted,
             )
         except RecordingError as exc:
             QMessageBox.critical(self, "No se pudo iniciar la grabación", str(exc))
             self.record_button.setEnabled(True)
             self.status_label.setText("Listo")
+            self._start_live_monitor()
             return
         except Exception as exc:
             QMessageBox.critical(self, "Error inesperado", str(exc))
             self.record_button.setEnabled(True)
+            self._start_live_monitor()
             return
-
-        for track in self.recording_manager._tracks:
-            if 'Micr' in track.label or 'mic' in track.label.lower():
-                track.volume = mic_vol
-            else:
-                track.volume = spk_vol
 
         self.is_recording = True
         self.is_paused = False
@@ -584,10 +780,10 @@ class StreamApp(QMainWindow):
         self.record_button.setEnabled(True)
         self.pause_button.setVisible(True)
         self.pause_button.setText("Pausa")
+        self.timer_label.setText("00:00")
+        self.timer_label.setVisible(True)
         self.screen_selector.setEnabled(False)
         self.audio_button.setEnabled(False)
-        self.mic_slider.setEnabled(False)
-        self.speaker_slider.setEnabled(False)
         self.status_label.setText("Grabando...")
 
     async def stop_recording(self):
@@ -597,10 +793,6 @@ class StreamApp(QMainWindow):
         self.status_label.setText("Cerrando archivos...")
 
         try:
-            if self.is_paused:
-                self.recording_manager.resume()
-                self.is_paused = False
-
             paths = self.recording_manager.stop()
             self.is_recording = False
             self.is_paused = False
@@ -612,24 +804,26 @@ class StreamApp(QMainWindow):
                     None, self.recording_manager.finalize, paths
                 )
                 self._saved_path = result
-                self.status_label.setText(f"Guardado: {result}")
+                self.status_label.setText("Grabación guardada")
                 self.saved_path_label.setText(result)
+                self.saved_path_label.setToolTip(result)
                 self.saved_path_label.setVisible(True)
                 self.open_folder_button.setVisible(True)
         except Exception as exc:
             import traceback
-            print(f"[stop_recording] error: {exc}")
             traceback.print_exc()
             self.status_label.setText(f"Error al guardar: {exc}")
+            self.is_recording = False
+            self.is_paused = False
 
         self.record_button.setText("Iniciar Grabacion")
         self.record_button.setEnabled(True)
         self.pause_button.setVisible(False)
         self.pause_button.setEnabled(True)
+        self.timer_label.setVisible(False)
         self.screen_selector.setEnabled(True)
         self.audio_button.setEnabled(True)
-        self.mic_slider.setEnabled(True)
-        self.speaker_slider.setEnabled(True)
+        self._start_live_monitor()
 
     def toggle_pause(self):
         if not self.is_recording:
@@ -643,18 +837,7 @@ class StreamApp(QMainWindow):
             self.recording_manager.pause()
             self.is_paused = True
             self.pause_button.setText("Reanudar")
-            self.status_label.setText("Pausado...")
-
-    def _open_recording_folder(self):
-        if not self._saved_path:
-            return
-        folder = os.path.dirname(self._saved_path)
-        if sys.platform == 'win32':
-            os.startfile(folder)
-        elif sys.platform == 'darwin':
-            subprocess.run(['open', folder])
-        else:
-            subprocess.run(['xdg-open', folder])
+            self.status_label.setText("Pausado")
 
     def update_screen_list(self):
         self.screens = get_screen_list()
@@ -664,12 +847,15 @@ class StreamApp(QMainWindow):
             self.screen_selector.addItem(screen['name'])
         self.screen_selector.blockSignals(False)
 
-        if self.screens:
-            self.screen_selector.setCurrentIndex(0)
-            self.update_screen_selection(0)
-        else:
+        if not self.screens:
             QMessageBox.critical(self, "Sin monitores",
                                  "No se detectó ningún monitor para capturar.")
+            return
+
+        stored = self.config['monitor'].get('index', 0)
+        index = stored if 0 <= stored < len(self.screens) else 0
+        self.screen_selector.setCurrentIndex(index)
+        self.update_screen_selection(index)
 
     def update_screen_selection(self, index):
         if not (0 <= index < len(self.screens)) or self.is_recording:
@@ -678,36 +864,176 @@ class StreamApp(QMainWindow):
         self.current_screen = index
         self.stop_capture_thread()
         self.start_capture_thread()
+        self._schedule_save()
 
     def start_capture_thread(self):
         if self.current_screen is None:
             return
         monitor = self.screens[self.current_screen]['monitor']
-        self.capture_thread = ScreenCaptureThread(monitor, parent=self)
+        self.capture_thread = ScreenCaptureThread(
+            monitor,
+            fps=self.config['video']['fps'],
+            draw_cursor=self.config['video']['capture_cursor'],
+            parent=self,
+        )
         self.capture_thread.start()
 
     def stop_capture_thread(self):
-        if self.capture_thread is not None:
-            self.capture_thread.stop()
-            self.capture_thread.deleteLater()
-            self.capture_thread = None
-            self.preview_label.clear()
+        thread = self.capture_thread
+        if thread is None:
+            return
+        self.capture_thread = None
+        thread.stop()
+        if thread.isFinished():
+            thread.deleteLater()
+        else:
+            thread.finished.connect(thread.deleteLater)
+        self.preview_label.clear()
 
     def show_audio_settings(self):
+        if self.is_recording:
+            QMessageBox.information(
+                self, "Grabación en curso",
+                "Detén la grabación para cambiar los dispositivos de audio."
+            )
+            return
         dialog = AudioSettingsDialog(self)
         if dialog.exec_():
+            self._refresh_channel_labels()
             self._start_live_monitor()
+            self._schedule_save()
+
+    def _schedule_save(self):
+        self._save_timer.start()
+
+    def _collect_config(self):
+        config = dict(self.config)
+        config['output_dir'] = self.recording_manager.output_dir
+        config['audio'] = dict(self.config['audio'])
+        config['audio'].update({
+            'mic_device': self.selected_mics[0]['name'] if self.selected_mics else None,
+            'speaker_device': (self.selected_speakers[0]['name']
+                               if self.selected_speakers else None),
+            'mic_volume': self.mic_panel.get_volume(),
+            'speaker_volume': self.speaker_panel.get_volume(),
+            'mic_muted': self.mic_panel.is_muted(),
+            'speaker_muted': self.speaker_panel.is_muted(),
+        })
+        config['monitor'] = dict(self.config['monitor'])
+        if self.current_screen is not None and self.screens:
+            monitor = self.screens[self.current_screen]['monitor']
+            config['monitor'].update({
+                'index': self.current_screen,
+                'width': monitor['width'],
+                'height': monitor['height'],
+            })
+        return config
+
+    def _save_config(self):
+        self.config = self._collect_config()
+        user_config.save(self.config)
+
+    def _open_folder(self, folder):
+        if not folder or not os.path.isdir(folder):
+            QMessageBox.warning(self, "Carpeta no disponible",
+                                f"No existe la carpeta:\n{folder}")
+            return
+        try:
+            if sys.platform == 'win32':
+                os.startfile(folder)
+            elif sys.platform == 'darwin':
+                subprocess.run(['open', folder], check=False)
+            else:
+                subprocess.run(['xdg-open', folder], check=False)
+        except Exception as exc:
+            QMessageBox.warning(self, "No se pudo abrir la carpeta", str(exc))
+
+    def _open_recording_folder(self):
+        if self._saved_path:
+            self._open_folder(os.path.dirname(self._saved_path))
+        else:
+            self._open_output_folder()
+
+    def _open_output_folder(self):
+        self._open_folder(self.recording_manager.output_dir)
+
+    def _open_config_folder(self):
+        folder = user_config.config_dir()
+        os.makedirs(folder, exist_ok=True)
+        if not os.path.exists(user_config.config_path()):
+            self._save_config()
+        self._open_folder(folder)
+
+    def _choose_output_folder(self):
+        if self.is_recording:
+            QMessageBox.information(self, "Grabación en curso",
+                                    "Detén la grabación para cambiar la carpeta.")
+            return
+        folder = QFileDialog.getExistingDirectory(
+            self, "Carpeta para las grabaciones", self.recording_manager.output_dir
+        )
+        if not folder:
+            return
+        if not os.access(folder, os.W_OK):
+            QMessageBox.warning(self, "Carpeta no escribible",
+                                "No hay permisos de escritura en esa carpeta.")
+            return
+        self.recording_manager.output_dir = folder
+        self.status_label.setText(f"Las grabaciones se guardarán en {folder}")
+        self._save_config()
+
+    def _reset_config(self):
+        answer = QMessageBox.question(
+            self, "Restablecer configuración",
+            "Se volverá a los valores por defecto. La configuración actual se "
+            "guardará como config.json.bak.\n\n¿Continuar?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+
+        self.config = user_config.reset()
+        self.recording_manager.output_dir = self.config['output_dir']
+        self.selected_mics = self._restore_device('mics', 'mic_device')
+        self.selected_speakers = self._restore_device('speakers', 'speaker_device')
+        self._apply_audio_config()
+        self._start_live_monitor()
+        self.status_label.setText("Configuración restablecida")
+
+    def _restore_geometry(self):
+        state = user_config.load_state()
+        geometry = state.get('window')
+        if not isinstance(geometry, dict):
+            return
+        try:
+            available = QApplication.desktop().availableGeometry(self)
+            width = min(int(geometry['width']), available.width())
+            height = min(int(geometry['height']), available.height())
+            x = int(geometry['x'])
+            y = int(geometry['y'])
+            if not available.contains(x, y):
+                x, y = available.x() + 40, available.y() + 40
+            self.setGeometry(x, y, width, height)
+        except Exception:
+            pass
+
+    def _save_state(self):
+        rect = self.geometry()
+        user_config.save_state({
+            'window': {
+                'x': rect.x(), 'y': rect.y(),
+                'width': rect.width(), 'height': rect.height(),
+            },
+        })
 
     def closeEvent(self, event):
         self.preview_timer.stop()
-        if self._meter_timer:
-            self._meter_timer.stop()
+        self._meter_timer.stop()
+        self._save_timer.stop()
 
         self._live_monitor.stop()
 
         if self.is_recording:
-            if self.is_paused:
-                self.recording_manager.resume()
             try:
                 paths = self.recording_manager.stop()
                 self.is_recording = False
@@ -719,6 +1045,8 @@ class StreamApp(QMainWindow):
         self.stop_capture_thread()
         self.recording_manager.cleanup()
 
-        import sys
+        self._save_config()
+        self._save_state()
+
         event.accept()
-        sys.exit(0)
+        QApplication.quit()
