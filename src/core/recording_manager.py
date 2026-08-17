@@ -1,274 +1,249 @@
-from datetime import datetime
+"""Orquesta la grabación: vídeo a ritmo constante y pistas de audio en paralelo."""
 import os
+import threading
+import time
+from datetime import datetime
+
 import cv2
-import sounddevice as sd
-import wave
 import numpy as np
-from ..utils.async_utils import ProcessManager, AsyncWorker
-from ..config.settings import (
-    VIDEO_FPS,
-    VIDEO_CODEC,
-    AUDIO_CHANNELS,
-    AUDIO_SAMPLE_RATE,
-    AUDIO_CHUNK_SIZE
+
+from ..config.settings import VIDEO_CODEC, VIDEO_FPS
+from ..utils.video_utils import combine_audio_video, find_ffmpeg
+from .audio_capture import (
+    AudioError,
+    InputTrack,
+    LoopbackTrack,
+    find_stereo_mix_device,
+    loopback_backend_available,
 )
 
+
+class RecordingError(Exception):
+    """Error que impide grabar y que debe mostrarse al usuario."""
+
+
 class RecordingManager:
+    """Gestiona una sesión de grabación completa."""
+
     def __init__(self, output_dir):
         self.output_dir = output_dir
-        self.process_manager = ProcessManager()
         self.is_recording = False
-        self.current_recording = None
-        self.video_writer = None
-        self.audio_streams = {}
-        self.wav_files = {}
+        self.frames_written = 0
+        self._frame_provider = None
+        self._video_writer = None
+        self._video_thread = None
+        self._video_size = None
+        self._start_time = None
+        self._stop_time = None
+        self._tracks = []
+        self._paths = None
 
-    async def start_recording(self, monitor, selected_speakers, selected_mics):
-        """Inicia la grabación."""
+    def start(self, monitor, selected_speakers, selected_mics, frame_provider):
+        """Arranca la grabación. Lanza RecordingError si algo falla."""
         if self.is_recording:
-            return False
+            raise RecordingError("Ya hay una grabación en curso.")
+
+        date_folder = datetime.now().strftime("%Y-%m-%d")
+        recording_dir = os.path.join(self.output_dir, date_folder)
+        os.makedirs(recording_dir, exist_ok=True)
+
+        timestamp = datetime.now().strftime("%H-%M-%S")
+        base = os.path.join(recording_dir, f"recording_{timestamp}")
+
+        self._paths = {
+            'video': f"{base}_temp.avi",
+            'mic': None,
+            'speakers': None,
+            'final': f"{base}.avi",
+            'offsets': {},
+        }
+        self._frame_provider = frame_provider
+        self._video_size = (int(monitor['width']), int(monitor['height']))
 
         try:
-            print("\n=== Iniciando grabación ===")
-            
-            # Crear directorios y nombres de archivo
-            date_folder = datetime.now().strftime("%Y-%m-%d")
-            recording_dir = os.path.join(self.output_dir, date_folder)
-            os.makedirs(recording_dir, exist_ok=True)
-            
-            timestamp = datetime.now().strftime("%H-%M-%S")
-            filename_base = os.path.join(recording_dir, f"recording_{timestamp}")
-            
-            print(f"Directorio de grabación: {recording_dir}")
-            print(f"Nombre base del archivo: {os.path.basename(filename_base)}")
-            
-            # Inicializar grabación de video
-            video_file = f"{filename_base}_temp.avi"
-            print(f"\nCreando archivo de video: {os.path.basename(video_file)}")
-            
-            self.video_writer = cv2.VideoWriter(
-                video_file,
-                cv2.VideoWriter_fourcc(*VIDEO_CODEC),
-                VIDEO_FPS,
-                (monitor['width'], monitor['height'])
-            )
-
-            if not self.video_writer.isOpened():
-                raise Exception("No se pudo crear el archivo de video")
-            print("✓ Video writer inicializado correctamente")
-
-            # Inicializar grabación de audio
-            print("\nIniciando grabación de audio...")
-            self.is_recording = True
-            
+            self._open_video()
+            tracks = {}
             if selected_mics:
-                print(f"\nIniciando grabación de micrófono: {selected_mics[0]['name']}")
-                self._init_microphone(filename_base, selected_mics[0]['id'])
-                print("✓ Grabación de micrófono iniciada")
-                
+                self._paths['mic'] = f"{base}_mic.wav"
+                tracks['mic'] = InputTrack(
+                    'Micrófono', selected_mics[0]['id'], self._paths['mic']
+                )
             if selected_speakers:
-                print(f"\nIniciando grabación de audio del sistema: {selected_speakers[0]['name']}")
-                self._init_system_audio(filename_base, selected_speakers[0]['id'])
-                print("✓ Grabación de audio del sistema iniciada")
+                self._paths['speakers'] = f"{base}_speakers.wav"
+                tracks['speakers'] = self._build_system_track(
+                    selected_speakers[0], self._paths['speakers']
+                )
+            for track in tracks.values():
+                self._start_track(track)
 
-            self.current_recording = {
-                'video': video_file,
-                'mic': f"{filename_base}_mic.wav" if selected_mics else None,
-                'speakers': f"{filename_base}_speakers.wav" if selected_speakers else None,
-                'final': f"{filename_base}.avi"
-            }
+            self._begin_video()
+            for key, track in tracks.items():
+                if track.started_at is not None:
+                    self._paths['offsets'][key] = track.started_at - self._start_time
+        except AudioError as exc:
+            self._teardown()
+            raise RecordingError(str(exc)) from exc
+        except Exception:
+            self._teardown()
+            raise
 
-            print("\n✓ Grabación iniciada correctamente")
-            return True
+        self.is_recording = True
+        print(f"\n=== Grabando en {os.path.basename(base)} ===")
 
-        except Exception as e:
-            print(f"\n✗ Error al iniciar grabación: {str(e)}")
-            self.is_recording = False
-            if self.video_writer:
-                self.video_writer.release()
-                self.video_writer = None
-            return False
+    @staticmethod
+    def _build_system_track(speaker, path):
+        """Loopback WASAPI si es posible; si no, una entrada tipo 'Mezcla estéreo'."""
+        label = 'Audio del sistema'
+        if loopback_backend_available():
+            return LoopbackTrack(label, speaker.get('name'), path)
 
-    def _init_microphone(self, filename_base, mic_id):
-        """Inicializa la grabación del micrófono."""
-        try:
-            self.wav_files['mic'] = wave.open(f"{filename_base}_mic.wav", 'wb')
-            self.wav_files['mic'].setnchannels(AUDIO_CHANNELS)
-            self.wav_files['mic'].setsampwidth(2)
-            self.wav_files['mic'].setframerate(AUDIO_SAMPLE_RATE)
+        fallback = find_stereo_mix_device()
+        if fallback is not None:
+            return InputTrack(label, fallback, path)
 
-            def mic_callback(indata, frames, time, status):
-                if status:
-                    print(f"Estado del micrófono: {status}")
-                if self.is_recording and len(indata) > 0:
-                    try:
-                        data = (indata * 32767).astype(np.int16)
-                        self.wav_files['mic'].writeframes(data.tobytes())
-                    except Exception as e:
-                        print(f"Error en callback de micrófono: {str(e)}")
+        raise AudioError(
+            "No hay forma de capturar el audio del sistema.\n"
+            "Instala el backend de loopback con: pip install soundcard"
+        )
 
-            self.audio_streams['mic'] = sd.InputStream(
-                device=mic_id,
-                channels=AUDIO_CHANNELS,
-                callback=mic_callback,
-                samplerate=AUDIO_SAMPLE_RATE,
-                blocksize=AUDIO_CHUNK_SIZE,
-                dtype=np.float32
+    def _start_track(self, track):
+        track.start()
+        self._tracks.append(track)
+
+    def _open_video(self):
+        width, height = self._video_size
+        self._video_writer = cv2.VideoWriter(
+            self._paths['video'],
+            cv2.VideoWriter_fourcc(*VIDEO_CODEC),
+            VIDEO_FPS,
+            (width, height),
+        )
+        if not self._video_writer.isOpened():
+            self._video_writer = None
+            raise RecordingError(
+                "No se pudo crear el archivo de vídeo. "
+                f"¿Está disponible el códec {VIDEO_CODEC}?"
             )
-            self.audio_streams['mic'].start()
 
-        except Exception as e:
-            print(f"Error al inicializar micrófono: {str(e)}")
-            if 'mic' in self.wav_files:
-                self.wav_files['mic'].close()
-                del self.wav_files['mic']
+    def _begin_video(self):
+        """Arranca el reloj del vídeo cuando el audio ya está capturando."""
+        self.frames_written = 0
+        self._stop_time = None
+        self._start_time = time.perf_counter()
+        self._video_thread = threading.Thread(
+            target=self._video_loop, name="video-writer", daemon=True
+        )
+        self._video_thread.start()
 
-    def _init_system_audio(self, filename_base, speaker_id):
-        """Inicializa la grabación del audio del sistema."""
-        try:
-            self.wav_files['speakers'] = wave.open(f"{filename_base}_speakers.wav", 'wb')
-            self.wav_files['speakers'].setnchannels(AUDIO_CHANNELS)
-            self.wav_files['speakers'].setsampwidth(2)
-            self.wav_files['speakers'].setframerate(AUDIO_SAMPLE_RATE)
+    def _video_loop(self):
+        """Escribe a FPS constante contra el reloj real.
 
-            def speaker_callback(indata, frames, time, status):
-                if status:
-                    print(f"Estado del audio del sistema: {status}")
-                if self.is_recording and len(indata) > 0:
-                    try:
-                        data = (indata * 32767).astype(np.int16)
-                        self.wav_files['speakers'].writeframes(data.tobytes())
-                    except Exception as e:
-                        print(f"Error en callback de audio del sistema: {str(e)}")
+        El número de frames escritos se deriva del tiempo transcurrido, no de
+        cuántos frames haya producido la captura. Así la duración del archivo
+        coincide siempre con la duración real y el audio queda sincronizado,
+        aunque la captura o el encoder se retrasen puntualmente.
+        """
+        width, height = self._video_size
+        black = np.zeros((height, width, 3), dtype=np.uint8)
+        frame_time = 1.0 / VIDEO_FPS
 
-            # Buscar dispositivo de loopback
-            loopback_device = None
-            for i, dev in enumerate(sd.query_devices()):
-                if ('stereo mix' in dev['name'].lower() or 
-                    'what u hear' in dev['name'].lower() or
-                    'voicemeeter' in dev['name'].lower()):
-                    loopback_device = i
-                    break
+        while True:
+            end = self._stop_time
+            now = end if end is not None else time.perf_counter()
+            target = int((now - self._start_time) * VIDEO_FPS)
 
-            if loopback_device is None:
-                loopback_device = speaker_id
+            frame = self._frame_provider() if self._frame_provider else None
+            frame = self._fit(frame, width, height) if frame is not None else black
 
-            self.audio_streams['speakers'] = sd.InputStream(
-                device=loopback_device,
-                channels=AUDIO_CHANNELS,
-                callback=speaker_callback,
-                samplerate=AUDIO_SAMPLE_RATE,
-                blocksize=AUDIO_CHUNK_SIZE,
-                dtype=np.float32
-            )
-            self.audio_streams['speakers'].start()
+            while self.frames_written < target:
+                self._video_writer.write(frame)
+                self.frames_written += 1
 
-        except Exception as e:
-            print(f"Error al inicializar audio del sistema: {str(e)}")
-            if 'speakers' in self.wav_files:
-                self.wav_files['speakers'].close()
-                del self.wav_files['speakers']
+            if end is not None:
+                return
+            time.sleep(frame_time / 2)
 
-    async def stop_recording(self):
-        """Detiene la grabación."""
+    @staticmethod
+    def _fit(frame, width, height):
+        """Adapta el frame al tamaño del writer (cv2 descarta los que no encajan)."""
+        if frame.ndim == 3 and frame.shape[2] == 4:
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+        if frame.shape[0] != height or frame.shape[1] != width:
+            frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_AREA)
+        return frame
+
+    def stop(self):
+        """Cierra streams y archivos. Rápido y síncrono; devuelve las rutas."""
         if not self.is_recording:
-            return False
+            return None
 
-        try:
-            print("\n=== Deteniendo grabación ===")
-            self.is_recording = False
+        self.is_recording = False
+        print("\n=== Deteniendo grabación ===")
 
-            # Detener streams de audio
-            print("\nDeteniendo streams de audio...")
-            for stream in self.audio_streams.values():
-                stream.stop()
-                stream.close()
-            self.audio_streams.clear()
-            print("✓ Streams de audio detenidos")
+        for track in self._tracks:
+            track.stop()
+        self._tracks.clear()
 
-            # Cerrar archivos WAV
-            print("\nCerrando archivos de audio...")
-            for wav_file in self.wav_files.values():
-                wav_file.close()
-            self.wav_files.clear()
-            print("✓ Archivos de audio cerrados")
+        self._stop_video()
 
-            # Cerrar video writer
-            print("\nCerrando archivo de video...")
-            if self.video_writer:
-                self.video_writer.release()
-                self.video_writer = None
-            print("✓ Archivo de video cerrado")
+        paths = self._paths
+        self._paths = None
+        self._frame_provider = None
 
-            # Verificar archivos
-            print("\nVerificando archivos generados:")
-            for key, path in self.current_recording.items():
+        print(f"[ok] {self.frames_written} frames "
+              f"({self.frames_written / VIDEO_FPS:.1f}s)")
+        return paths
+
+    def _stop_video(self):
+        self._stop_time = time.perf_counter()
+        if self._video_thread is not None:
+            self._video_thread.join(timeout=15)
+            self._video_thread = None
+        if self._video_writer is not None:
+            self._video_writer.release()
+            self._video_writer = None
+
+    def _teardown(self):
+        """Limpieza tras un arranque fallido: no deja hilos ni archivos a medias."""
+        for track in self._tracks:
+            track.stop()
+        self._tracks.clear()
+        self._stop_video()
+        if self._paths:
+            for key in ('video', 'mic', 'speakers'):
+                path = self._paths.get(key)
                 if path and os.path.exists(path):
-                    size = os.path.getsize(path)
-                    print(f"✓ {key}: {os.path.basename(path)} ({size} bytes)")
-                elif path:
-                    print(f"✗ {key}: Archivo no encontrado - {os.path.basename(path)}")
+                    try:
+                        os.remove(path)
+                    except OSError:
+                        pass
+        self._paths = None
+        self.is_recording = False
 
-            # Combinar audio y video
-            if self.current_recording:
-                print("\nCombinando audio y video...")
-                await self._combine_audio_video()
+    def finalize(self, paths):
+        """Mezcla audio y vídeo. Bloqueante: llamar fuera del hilo de UI."""
+        if not paths:
+            return None
 
-            print("\n✓ Grabación finalizada correctamente")
-            return True
+        offsets = paths.get('offsets') or {}
+        audio_files = [
+            (paths[key], offsets.get(key, 0.0)) for key in ('mic', 'speakers')
+            if paths.get(key) and os.path.exists(paths[key])
+        ]
+        _, message = combine_audio_video(paths['video'], audio_files, paths['final'])
+        print(message)
+        return paths['final'] if os.path.exists(paths['final']) else paths['video']
 
-        except Exception as e:
-            print(f"\n✗ Error al detener grabación: {str(e)}")
-            return False
-
-    async def _combine_audio_video(self):
-        """Combina audio y video de manera asíncrona."""
-        from ..utils.video_utils import combine_audio_video
-        
-        try:
-            audio_files = []
-            if self.current_recording['mic'] and os.path.exists(self.current_recording['mic']):
-                audio_files.append(self.current_recording['mic'])
-            if self.current_recording['speakers'] and os.path.exists(self.current_recording['speakers']):
-                audio_files.append(self.current_recording['speakers'])
-
-            # Ejecutar la combinación en un worker separado
-            worker = AsyncWorker(
-                combine_audio_video,
-                self.current_recording['video'],
-                audio_files,
-                self.current_recording['final']
-            )
-            worker.start()
-            worker.wait()  # Esperar a que termine
-
-        except Exception as e:
-            print(f"Error al combinar audio y video: {str(e)}")
-            # En caso de error, mantener el video temporal
-            if os.path.exists(self.current_recording['video']):
-                os.rename(self.current_recording['video'], self.current_recording['final'])
-
-    def write_frame(self, frame):
-        """Escribe un frame al video si está grabando."""
-        if self.is_recording and self.video_writer:
-            try:
-                # Asegurarse de que el frame esté en BGR
-                if frame.shape[-1] == 4:  # Si es BGRA
-                    frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
-                self.video_writer.write(frame)
-                return True
-            except Exception as e:
-                print(f"Error al escribir frame: {str(e)}")
-                return False
-        return False
+    @staticmethod
+    def ffmpeg_available():
+        return find_ffmpeg() is not None
 
     def cleanup(self):
-        """Limpia todos los recursos."""
-        self.process_manager.stop_all()
-        if self.video_writer:
-            self.video_writer.release()
-        for stream in self.audio_streams.values():
-            stream.stop()
-            stream.close()
-        for wav_file in self.wav_files.values():
-            wav_file.close() 
+        """Libera todo por si la app se cierra en cualquier estado."""
+        if self.is_recording:
+            self.stop()
+            return
+        for track in self._tracks:
+            track.stop()
+        self._tracks.clear()
+        self._stop_video()
