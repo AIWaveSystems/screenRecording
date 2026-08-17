@@ -150,27 +150,31 @@ class RecordingManager:
         black = np.zeros((height, width, 3), dtype=np.uint8)
         frame_time = 1.0 / VIDEO_FPS
 
-        while True:
-            end = self._stop_time
-            if end is not None:
-                now = end
-            elif self.is_paused:
+        try:
+            while True:
+                end = self._stop_time
+                if end is not None:
+                    now = end
+                elif self.is_paused:
+                    time.sleep(frame_time / 2)
+                    continue
+                else:
+                    now = time.perf_counter()
+                target = int((now - self._start_time - self._total_paused) * VIDEO_FPS)
+
+                frame = self._frame_provider() if self._frame_provider else None
+                frame = self._fit(frame, width, height) if frame is not None else black
+
+                while self.frames_written < target:
+                    self._video_writer.write(frame)
+                    self.frames_written += 1
+
+                if end is not None:
+                    return
                 time.sleep(frame_time / 2)
-                continue
-            else:
-                now = time.perf_counter()
-            target = int((now - self._start_time - self._total_paused) * VIDEO_FPS)
-
-            frame = self._frame_provider() if self._frame_provider else None
-            frame = self._fit(frame, width, height) if frame is not None else black
-
-            while self.frames_written < target:
-                self._video_writer.write(frame)
-                self.frames_written += 1
-
-            if end is not None:
-                return
-            time.sleep(frame_time / 2)
+        except Exception as exc:
+            print(f"[video-writer] error fatal: {exc}")
+            self._stop_time = time.perf_counter()
 
     def pause(self):
         """Pausa la grabación."""
@@ -212,8 +216,14 @@ class RecordingManager:
     @staticmethod
     def _fit(frame, width, height):
         """Adapta el frame al tamaño del writer (cv2 descarta los que no encajan)."""
-        if frame.ndim == 3 and frame.shape[2] == 4:
+        if frame is None or frame.size == 0:
+            return np.zeros((height, width, 3), dtype=np.uint8)
+        if frame.ndim == 2:
+            frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+        elif frame.ndim == 3 and frame.shape[2] == 4:
             frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+        elif frame.ndim == 3 and frame.shape[2] != 3:
+            return np.zeros((height, width, 3), dtype=np.uint8)
         if frame.shape[0] != height or frame.shape[1] != width:
             frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_AREA)
         return frame

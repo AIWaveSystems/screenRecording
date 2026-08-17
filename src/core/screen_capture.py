@@ -151,7 +151,6 @@ class ScreenCaptureThread(QThread):
             'mon': self.monitor.get('mon', 1),
         }
         frame_time = 1.0 / self.fps
-        consecutive_errors = 0
 
         with mss.mss() as sct:
             next_frame_at = time.perf_counter()
@@ -168,7 +167,6 @@ class ScreenCaptureThread(QThread):
                         self._cursor.draw(frame, self.monitor)
 
                     self._latest_frame = frame
-                    consecutive_errors = 0
 
                     next_frame_at += frame_time
                     delay = next_frame_at - time.perf_counter()
@@ -177,11 +175,7 @@ class ScreenCaptureThread(QThread):
                     else:
                         next_frame_at = time.perf_counter()
                 except Exception as exc:
-                    consecutive_errors += 1
-                    if consecutive_errors <= 2:
-                        print(f"Error en captura: {exc}")
-                    elif consecutive_errors == 3:
-                        print("Error en captura: silenciando errores repetidos...")
+                    print(f"Error en captura: {exc}")
                     time.sleep(frame_time)
 
     def stop(self):
