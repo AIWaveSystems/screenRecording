@@ -129,13 +129,14 @@ class ScreenCaptureThread(QThread):
     escriben desde aquí, solo leen. Así la captura no depende del hilo de UI.
     """
 
-    def __init__(self, monitor, fps=VIDEO_FPS, parent=None):
+    def __init__(self, monitor, fps=VIDEO_FPS, draw_cursor=None, parent=None):
         super().__init__(parent)
         self.monitor = monitor
-        self.fps = fps
+        self.fps = max(1, int(fps))
         self._running = True
         self._latest_frame = None
-        self._cursor = CursorRenderer() if CAPTURE_CURSOR else None
+        show_cursor = CAPTURE_CURSOR if draw_cursor is None else draw_cursor
+        self._cursor = CursorRenderer() if show_cursor else None
 
     @property
     def latest_frame(self):
