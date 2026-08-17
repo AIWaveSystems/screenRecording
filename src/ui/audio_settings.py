@@ -1,109 +1,75 @@
 from PyQt5.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QCheckBox,
-    QPushButton, QScrollArea, QWidget, QTabWidget
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
+    QLabel,
+    QVBoxLayout,
 )
-from PyQt5.QtCore import Qt
-import sounddevice as sd
+
 
 class AudioSettingsDialog(QDialog):
+    """Selección de las fuentes de audio a grabar.
+
+    Se elige como máximo una fuente de cada tipo: el grabador solo abre un
+    stream por pista, así que ofrecer varias casillas prometía algo que nunca
+    se cumplía.
+    """
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.parent = parent
+        self._app = parent
         self.setWindowTitle("Configuración de Audio")
-        self.setGeometry(150, 150, 500, 400)
-        self.selected_speakers = []
-        self.selected_mics = []
+        self.setMinimumWidth(480)
         self.init_ui()
 
     def init_ui(self):
-        layout = QVBoxLayout()
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
 
-        # Crear el widget de pestañas
-        tab_widget = QTabWidget()
+        self.mic_combo = self._build_combo(
+            self._app.audio_devices['mics'], self._app.selected_mics
+        )
+        self.speaker_combo = self._build_combo(
+            self._app.audio_devices['speakers'], self._app.selected_speakers
+        )
 
-        # Pestaña de Micrófonos
-        mic_tab = QWidget()
-        mic_layout = QVBoxLayout()
-        
-        # Crear área de desplazamiento para micrófonos
-        mic_scroll = QScrollArea()
-        mic_scroll.setWidgetResizable(True)
-        mic_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        
-        mic_container = QWidget()
-        mic_container_layout = QVBoxLayout()
-        
-        for device in self.parent.audio_devices['mics']:
-            checkbox = QCheckBox(device['name'])
-            checkbox.setChecked(any(d['id'] == device['id'] for d in self.parent.selected_mics))
-            checkbox.stateChanged.connect(lambda state, d=device: self.toggle_microphone(state, d))
-            mic_container_layout.addWidget(checkbox)
-        
-        # Agregar espacio expansible al final
-        mic_container_layout.addStretch()
-        mic_container.setLayout(mic_container_layout)
-        mic_scroll.setWidget(mic_container)
-        mic_layout.addWidget(mic_scroll)
-        mic_tab.setLayout(mic_layout)
+        form.addRow("Micrófono:", self.mic_combo)
+        form.addRow("Audio del sistema:", self.speaker_combo)
+        layout.addLayout(form)
 
-        # Pestaña de Salida de Audio
-        speaker_tab = QWidget()
-        speaker_layout = QVBoxLayout()
-        
-        # Crear área de desplazamiento para parlantes
-        speaker_scroll = QScrollArea()
-        speaker_scroll.setWidgetResizable(True)
-        speaker_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        
-        speaker_container = QWidget()
-        speaker_container_layout = QVBoxLayout()
-        
-        for device in self.parent.audio_devices['speakers']:
-            checkbox = QCheckBox(device['name'])
-            checkbox.setChecked(any(d['id'] == device['id'] for d in self.parent.selected_speakers))
-            checkbox.stateChanged.connect(lambda state, d=device: self.toggle_speaker(state, d))
-            speaker_container_layout.addWidget(checkbox)
-        
-        # Agregar espacio expansible al final
-        speaker_container_layout.addStretch()
-        speaker_container.setLayout(speaker_container_layout)
-        speaker_scroll.setWidget(speaker_container)
-        speaker_layout.addWidget(speaker_scroll)
-        speaker_tab.setLayout(speaker_layout)
+        hint = QLabel(
+            "El audio del sistema se captura por loopback WASAPI sobre la salida "
+            "elegida; no hace falta 'Mezcla estéreo' ni VB-Cable."
+        )
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
 
-        # Agregar pestañas al widget de pestañas
-        tab_widget.addTab(mic_tab, "Micrófonos")
-        tab_widget.addTab(speaker_tab, "Salida de Audio")
-        
-        layout.addWidget(tab_widget)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=self
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
 
-        # Botones de Aceptar/Cancelar
-        button_layout = QHBoxLayout()
-        
-        accept_button = QPushButton("Aceptar")
-        accept_button.clicked.connect(self.accept)
-        button_layout.addWidget(accept_button)
-        
-        cancel_button = QPushButton("Cancelar")
-        cancel_button.clicked.connect(self.reject)
-        button_layout.addWidget(cancel_button)
-        
-        layout.addLayout(button_layout)
-        self.setLayout(layout)
+    @staticmethod
+    def _build_combo(devices, selected):
+        combo = QComboBox()
+        combo.addItem("(Sin grabar)", None)
+        selected_id = selected[0]['id'] if selected else None
 
-    def toggle_speaker(self, state, device):
-        if state:
-            self.selected_speakers.append(device)
-        else:
-            self.selected_speakers = [d for d in self.selected_speakers if d['id'] != device['id']]
-
-    def toggle_microphone(self, state, device):
-        if state:
-            self.selected_mics.append(device)
-        else:
-            self.selected_mics = [d for d in self.selected_mics if d['id'] != device['id']]
+        for device in devices:
+            label = device['name']
+            if device.get('is_default'):
+                label += "  [predeterminado]"
+            combo.addItem(label, device)
+            if device['id'] == selected_id:
+                combo.setCurrentIndex(combo.count() - 1)
+        return combo
 
     def accept(self):
-        self.parent.selected_speakers = self.selected_speakers
-        self.parent.selected_mics = self.selected_mics
-        super().accept() 
+        mic = self.mic_combo.currentData()
+        speaker = self.speaker_combo.currentData()
+        self._app.selected_mics = [mic] if mic else []
+        self._app.selected_speakers = [speaker] if speaker else []
+        super().accept()
