@@ -33,6 +33,8 @@ Si prefieres ejecutarlo desde el código fuente, ve a [Instalación](#-instalaci
 - **Refuerzo del micrófono** configurable, para que la voz destaque sobre el
   audio del sistema
 - Interfaz con iconos, con modo compacto de solo iconos (`Ctrl+I`)
+- Pantalla de carga con progreso real durante el arranque
+- Ventana *Acerca de* con la versión y los datos de la organización
 - Pausa y reanudación sin descuadrar la duración del archivo
 - Previsualización en tiempo real, independiente de la grabación
 - Soporte para múltiples monitores
@@ -192,6 +194,37 @@ Muestra qué carpetas va a borrar con su tamaño y pide confirmación. Borra
 configuración y logs. **Tus grabaciones no se tocan**: se ofrecen aparte, en una
 segunda pregunta que por defecto responde que no.
 
+## 🏷️ Marca y versión
+
+El nombre, la versión y los datos de la organización viven en
+[`.env`](.env), no repartidos por el código:
+
+| Clave | Valor actual | Dónde se ve |
+|---|---|---|
+| `APP_NAME` | `Screen Recorder` | Título, pantalla de carga, Acerca de |
+| `APP_VERSION` | `1.0.0` | Pantalla de carga y Acerca de |
+| `ORG_NAME` | `AIWaveSystems` | Acerca de |
+| `ORG_TAGLINE` | `Powered by AIWaveSystems` | Pie de la pantalla de carga |
+| `ORG_LOGO_URL` | avatar de la organización | Acerca de |
+| `ORG_LOGO_FILE` | `assets/aiwavesystems.png` | Copia local del logo |
+| `APP_REPO_URL`, `APP_ISSUES_URL` | enlaces del repositorio | Botones de Acerca de |
+
+Para publicar una versión nueva basta cambiar `APP_VERSION`. El archivo se
+versiona en git porque no contiene secretos, solo datos públicos que la
+aplicación necesita al arrancar; si falta, cada clave tiene un valor por defecto
+en `src/config/app_info.py` y la aplicación funciona igual.
+
+El logo de la organización se muestra desde la copia incluida en `assets/`. Si
+no estuviera, se descarga de `ORG_LOGO_URL` en segundo plano y se guarda en
+caché; sin conexión se usa el icono de la aplicación.
+
+Los recursos gráficos se regeneran con:
+
+```bash
+python tools/make_icon.py     # logo.ico con las 9 resoluciones de Windows
+python tools/make_splash.py   # assets/splash.png para el arranque del .exe
+```
+
 ## 📁 Estructura del Proyecto
 
 ```
@@ -199,6 +232,7 @@ screenRecording/
 ├── src/
 │   ├── config/
 │   │   ├── settings.py            # Valores por defecto
+│   │   ├── app_info.py            # Marca y versión leídas del .env
 │   │   └── user_config.py         # Configuración persistente del usuario
 │   ├── core/
 │   │   ├── screen_capture.py      # Hilo de captura + cursor
@@ -209,8 +243,13 @@ screenRecording/
 │   └── ui/
 │       ├── main_window.py         # Ventana principal y mezclador
 │       ├── icons.py               # Iconos vectoriales sin archivos externos
+│       ├── splash.py              # Pantalla de carga
+│       ├── about.py               # Ventana Acerca de
 │       └── audio_settings.py      # Diálogos de audio y refuerzo
+├── assets/                        # Logo de la organización e imagen de carga
+├── tools/                         # Generadores de logo.ico y splash.png
 ├── tests/                         # Pruebas (ver abajo)
+├── .env                           # Nombre, versión y datos de la organización
 ├── config.example.json            # Configuración de referencia
 ├── main.py                        # Punto de entrada
 ├── main.spec                      # Receta de PyInstaller
@@ -236,6 +275,8 @@ unos 150 MB porque lleva Qt y FFmpeg completos dentro.
 ```bash
 python tests/config_test.py     # configuración: round-trip, corrupción, migración
 python tests/boost_test.py      # el refuerzo del micrófono llega al WAV
+python tests/about_test.py      # .env, ventana Acerca de y marca
+python tests/splash_test.py     # pantalla de carga e icono de la aplicación
 python tests/ui_visual_test.py  # iconos, modo compacto y capturas de pantalla
 python tests/smoke_test.py      # graba 6s: duración, sincronía, mute y mezcla
 python tests/ui_test.py         # ventana: grabar, pausar, silenciar, cerrar
