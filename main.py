@@ -1,13 +1,13 @@
-"""Punto de entrada de Screen Recorder."""
+"""Punto de entrada de Screen Recorder.
+
+Los módulos pesados (Qt, OpenCV, los backends de audio) se importan dentro de
+main(), después de que la pantalla de carga esté visible. Importarlos arriba
+dejaría la pantalla en negro durante los primeros segundos.
+"""
 import argparse
-import asyncio
 import sys
 
-import qasync
-from PyQt5.QtWidgets import QApplication
-
-from src.config import user_config
-from src.ui.main_window import StreamApp
+from src.config import app_info, user_config
 
 
 def _format_size(size):
@@ -63,8 +63,69 @@ def main():
     if args.purge:
         return run_purge()
 
+    return run_app()
+
+
+def _close_installer_splash():
+    """Cierra la pantalla nativa del instalador, si la aplicación va empaquetada.
+
+    PyInstaller la muestra durante la extracción del ejecutable, antes de que
+    exista intérprete de Python; se cierra en cuanto Qt puede pintar la suya.
+    """
+    try:
+        import pyi_splash
+        pyi_splash.close()
+    except Exception:
+        pass
+
+
+def _set_taskbar_identity():
+    """Da a la ventana identidad propia en la barra de tareas de Windows.
+
+    Sin esto Windows agrupa la aplicación bajo el proceso anfitrión y muestra
+    el icono de ese proceso en lugar del nuestro.
+    """
+    if sys.platform != 'win32':
+        return
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "AIWaveSystems.ScreenRecorder.1")
+    except Exception:
+        pass
+
+
+def run_app():
+    from PyQt5.QtWidgets import QApplication
+
+    _set_taskbar_identity()
+
     app = QApplication(sys.argv)
     app.setApplicationName("Screen Recorder")
+
+    from src.ui import icons
+
+    app.setWindowIcon(icons.app_icon())
+
+    from src.ui.splash import SplashScreen
+
+    splash = SplashScreen(app_info.version_label())
+    splash.show()
+    splash.set_progress(5, "Iniciando...")
+    _close_installer_splash()
+
+    splash.set_progress(15, "Cargando componentes de vídeo...")
+    import cv2
+
+    splash.set_progress(25, "Cargando componentes de audio...")
+    import sounddevice
+
+    splash.set_progress(30, "Preparando el bucle de eventos...")
+    import asyncio
+
+    import qasync
+
+    from src.ui.main_window import StreamApp
 
     loop = qasync.QEventLoop(app)
     asyncio.set_event_loop(loop)
@@ -72,8 +133,14 @@ def main():
     closed = asyncio.Event()
     app.aboutToQuit.connect(closed.set)
 
-    window = StreamApp()
+    try:
+        window = StreamApp(progress=splash.set_progress)
+    except Exception:
+        splash.close()
+        raise
+
     window.show()
+    splash.finish(window)
 
     with loop:
         loop.run_until_complete(closed.wait())
