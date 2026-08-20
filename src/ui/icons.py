@@ -170,6 +170,32 @@ def _reset(painter, s, color):
     painter.drawPath(path)
 
 
+def _logo(painter, s, color):
+    _pen(painter, color, s * 0.07)
+    painter.drawRoundedRect(QRectF(s * 0.10, s * 0.16, s * 0.80, s * 0.54),
+                            s * 0.07, s * 0.07)
+    painter.drawLine(QPointF(s * 0.34, s * 0.88), QPointF(s * 0.66, s * 0.88))
+    painter.drawLine(QPointF(s * 0.50, s * 0.70), QPointF(s * 0.50, s * 0.88))
+    _fill(painter, "#e74c3c")
+    painter.drawEllipse(QPointF(s * 0.50, s * 0.43), s * 0.13, s * 0.13)
+
+
+def _app(painter, s, color):
+    """Icono de la aplicación: lleva fondo propio para leerse a 16 px."""
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(QColor("#1e1e2e"))
+    painter.drawRoundedRect(QRectF(0, 0, s, s), s * 0.22, s * 0.22)
+
+    _pen(painter, "#f0f0f0", max(1.0, s * 0.075))
+    painter.drawRoundedRect(QRectF(s * 0.17, s * 0.24, s * 0.66, s * 0.44),
+                            s * 0.07, s * 0.07)
+    painter.drawLine(QPointF(s * 0.36, s * 0.80), QPointF(s * 0.64, s * 0.80))
+    painter.drawLine(QPointF(s * 0.50, s * 0.68), QPointF(s * 0.50, s * 0.80))
+
+    _fill(painter, "#e74c3c")
+    painter.drawEllipse(QPointF(s * 0.50, s * 0.46), s * 0.115, s * 0.115)
+
+
 def _compact(painter, s, color):
     _pen(painter, color, s * 0.08)
     painter.drawRoundedRect(QRectF(s * 0.14, s * 0.14, s * 0.30, s * 0.30), 4, 4)
@@ -195,6 +221,8 @@ _DRAWERS = {
     'exit': _exit,
     'reset': _reset,
     'compact': _compact,
+    'logo': _logo,
+    'app': _app,
 }
 
 _CACHE = {}
@@ -225,3 +253,27 @@ def icon(name, color="#f0f0f0", size=SIZE):
 
 def available():
     return sorted(_DRAWERS)
+
+
+def app_icon():
+    """Icono de la ventana: el .ico empaquetado, o el vectorial si no está."""
+    import os
+    import sys
+
+    from PyQt5.QtGui import QIcon
+
+    for folder in (getattr(sys, '_MEIPASS', None),
+                   os.path.dirname(os.path.dirname(os.path.dirname(
+                       os.path.abspath(__file__))))):
+        if not folder:
+            continue
+        candidate = os.path.join(folder, 'logo.ico')
+        if os.path.exists(candidate):
+            found = QIcon(candidate)
+            if not found.isNull():
+                return found
+
+    fallback = QIcon()
+    for size in (16, 24, 32, 48, 64, 128, 256):
+        fallback.addPixmap(pixmap('app', "#f0f0f0", size))
+    return fallback

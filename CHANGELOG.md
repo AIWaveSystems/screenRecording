@@ -6,6 +6,18 @@ Primera versión publicada.
 [Descargar](https://github.com/AIWaveSystems/screenRecording/releases/latest)
 
 ### Añadido
+- **Pantalla de carga** al arrancar, con logo, barra de progreso y el paso en
+  curso. Cubre los segundos de importar Qt, OpenCV y los backends de audio, más
+  la enumeración de dispositivos. En el ejecutable se apoya en la pantalla nativa
+  de PyInstaller, que aparece durante la extracción, antes de que exista
+  intérprete de Python.
+- **Ventana Acerca de** (*Ayuda → Acerca de*) con el logo de la organización,
+  versión, autor, licencia, ruta de configuración y accesos al repositorio, las
+  novedades y el reporte de fallos.
+- **Archivo `.env`** con el nombre, la versión y los datos de la organización,
+  usados por la pantalla de carga y por Acerca de. Cada clave tiene un valor por
+  defecto en el código, así que la aplicación arranca aunque falte.
+- Generadores de recursos en `tools/`: `make_icon.py` y `make_splash.py`.
 - **Refuerzo del micrófono**: ganancia extra fija (+15% por defecto, ajustable
   de 0% a +100% desde *Configuración → Refuerzo del micrófono*) que se suma al
   volumen de la pista para que la voz quede por encima del audio del sistema.
@@ -36,6 +48,13 @@ Primera versión publicada.
 - Posición y tamaño de la ventana recordados en `state.json`.
 
 ### Corregido
+- **Icono de la aplicación borroso en la barra de tareas**: `logo.ico` solo tenía
+  una imagen de 256x256 y Windows la reducía al vuelo. Ahora incluye las nueve
+  resoluciones que el sistema pide (16 a 256 px), dibujadas una a una.
+- **La ventana no usaba el icono del proyecto** mientras la aplicación estaba en
+  ejecución: nunca se llamaba a `setWindowIcon`, así que se veía el icono
+  genérico de Qt. Se añade también el identificador de aplicación de Windows para
+  que la barra de tareas no la agrupe bajo el proceso anfitrión.
 - **Vídeo al doble de velocidad y audio desincronizado**: los frames se
   escribían al ritmo del temporizador de la interfaz (15 Hz) mientras el
   archivo declaraba 30 fps. Ahora el número de frames lo decide el reloj real.

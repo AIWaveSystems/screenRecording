@@ -10,11 +10,18 @@ try:
 except Exception:
     pass
 
+datas = []
+for recurso in ('logo.ico', '.env'):
+    if os.path.exists(recurso):
+        datas.append((recurso, '.'))
+if os.path.isdir('assets'):
+    datas.append(('assets', 'assets'))
+
 a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=binaries,
-    datas=[],
+    datas=datas,
     hiddenimports=['pyaudiowpatch'],
     hookspath=[],
     hooksconfig={},
@@ -25,12 +32,26 @@ a = Analysis(
 )
 pyz = PYZ(a.pure)
 
+splash_image = os.path.join(os.path.abspath('.'), 'assets', 'splash.png')
+splash = Splash(
+    splash_image,
+    binaries=a.binaries,
+    datas=a.datas,
+    text_pos=(210, 222),
+    text_size=9,
+    text_color='#a0a0b0',
+    text_default='Extrayendo la aplicacion...',
+    minify_script=True,
+    always_on_top=True,
+) if os.path.exists(splash_image) else None
+
+exe_args = [pyz, a.scripts]
+if splash is not None:
+    exe_args.extend([splash, splash.binaries])
+exe_args.extend([a.binaries, a.datas, []])
+
 exe = EXE(
-    pyz,
-    a.scripts,
-    a.binaries,
-    a.datas,
-    [],
+    *exe_args,
     name='ScreenRecorder',
     icon='logo.ico',
     debug=False,

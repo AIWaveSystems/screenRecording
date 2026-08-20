@@ -34,6 +34,7 @@ from ..core.recording_manager import (
 )
 from ..core.screen_capture import ScreenCaptureThread
 from . import icons
+from .about import AboutDialog
 from .audio_settings import AudioSettingsDialog, MicBoostDialog
 
 ICON_SIZE = QSize(18, 18)
@@ -451,13 +452,15 @@ class AudioChannelPanel(QWidget):
 
 
 class StreamApp(QMainWindow):
-    def __init__(self):
+    def __init__(self, progress=None):
         super().__init__()
+        self._report = progress or (lambda value, message: None)
         self.setWindowTitle("Screen Recorder")
         self.setMinimumSize(900, 650)
         self.resize(1000, 700)
         self.setStyleSheet(STYLESHEET)
 
+        self._report(35, "Leyendo la configuracion...")
         self.config = user_config.load()
         self.preview_fps = self.config['preview']['fps']
         self.preview_max_width = self.config['preview']['max_width']
@@ -479,6 +482,7 @@ class StreamApp(QMainWindow):
         self._live_monitor = LiveAudioMonitor()
         self._pending_warnings = []
 
+        self._report(45, "Buscando dispositivos de audio...")
         self.audio_devices = self.get_audio_devices()
         self.selected_mics = self._restore_device('mics', 'mic_device')
         self.selected_speakers = self._restore_device('speakers', 'speaker_device')
@@ -488,11 +492,15 @@ class StreamApp(QMainWindow):
         self._save_timer.setInterval(700)
         self._save_timer.timeout.connect(self._save_config)
 
+        self._report(65, "Construyendo la interfaz...")
         self.init_ui()
+        self._report(85, "Restaurando tus preferencias...")
         self._restore_geometry()
         self._apply_audio_config()
+        self._report(92, "Activando los medidores de audio...")
         self._start_live_monitor()
 
+        self._report(98, "Casi listo...")
         if not self.recording_manager.ffmpeg_available():
             self._pending_warnings.append(
                 "FFmpeg no encontrado: se grabará vídeo sin audio mezclado."
@@ -696,6 +704,7 @@ class StreamApp(QMainWindow):
         self.preview_timer.timeout.connect(self.update_preview)
         self.preview_timer.start(max(1, 1000 // self.preview_fps))
 
+        self._report(78, "Iniciando la captura de pantalla...")
         self.update_screen_list()
         self._apply_compact_mode(self.compact_mode)
 
@@ -720,6 +729,10 @@ class StreamApp(QMainWindow):
                          "Abrir carpeta de configuración", self._open_config_folder)
         config.addAction(icons.icon('reset', TEXT_PRIMARY),
                          "Restablecer configuración", self._reset_config)
+
+        ayuda = menu.addMenu("Ayuda")
+        ayuda.addAction(icons.icon('logo', TEXT_PRIMARY), "Acerca de...",
+                        self.show_about)
 
         vista = menu.addMenu("Ver")
         self.compact_action = vista.addAction(
@@ -1027,6 +1040,9 @@ class StreamApp(QMainWindow):
         else:
             thread.finished.connect(thread.deleteLater)
         self.preview_label.clear()
+
+    def show_about(self):
+        AboutDialog(self).exec_()
 
     def show_mic_boost(self):
         dialog = MicBoostDialog(self.recording_manager.mic_boost, self)
