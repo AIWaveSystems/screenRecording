@@ -270,6 +270,14 @@ El resultado queda en `dist/ScreenRecorder.exe`. La receta incluye el binario de
 FFmpeg y el backend de audio, así que el ejecutable no necesita nada más. Pesa
 unos 150 MB porque lleva Qt y FFmpeg completos dentro.
 
+`logo.ico`, `.env` y `assets/` se incrustan en el binario **en el momento de
+compilar**. Si los cambias, el ejecutable anterior sigue con los valores viejos
+hasta que lo vuelvas a generar: es la causa habitual de "he cambiado el icono y
+sigue saliendo el de antes".
+
+Si `--clean` falla con *acceso denegado* sobre `build/`, compila sin esa opción
+o borra la carpeta a mano.
+
 ## 🧪 Pruebas
 
 ```bash
@@ -319,6 +327,14 @@ Python dentro, algo que algunos antivirus marcan por heurística. En SmartScreen
 La app avisa en la barra de estado. Suele ser que FFmpeg no está disponible:
 en el ejecutable va incluido, y desde el código se reinstala con
 `pip install -r requirements.txt`.
+
+### El icono sigue saliendo mal en la barra de tareas
+Si tienes la aplicación anclada, el anclaje es un acceso directo que **guardó el
+icono en caché** y no se actualiza al reemplazar el `.exe`: desánclala y vuelve a
+anclarla. Si el Explorador insiste con el icono antiguo, `ie4uinit.exe -show`
+refresca la caché del sistema. El icono de la ventana en ejecución no pasa por
+caché, así que ese cambia de inmediato. Comprueba también que el `.exe` sea
+[posterior al último `logo.ico`](#-compilar-el-ejecutable).
 
 ### He editado el config y la app no lo respeta
 Si el JSON quedó mal escrito, se apartó como `config.json.bak` y se arrancó con
